@@ -36,7 +36,7 @@ pub fn register(ctx: FlowContext, router: Arc<Router>) -> Vec<Box<dyn Flow>> {
                 KaspadMessagePayloadType::DoneHeaders,
                 KaspadMessagePayloadType::IbdBlockLocatorHighestHash,
                 KaspadMessagePayloadType::IbdBlockLocatorHighestHashNotFound,
-                KaspadMessagePayloadType::BlockWithTrustedDataV4,
+                KaspadMessagePayloadType::BlockWithTrustedData,
                 KaspadMessagePayloadType::DoneBlocksWithTrustedData,
                 KaspadMessagePayloadType::IbdChainBlockLocator,
                 KaspadMessagePayloadType::IbdBlock,

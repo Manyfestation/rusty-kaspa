@@ -39,7 +39,7 @@ impl<'a, 'b> TrustedEntryStream<'a, 'b> {
             Ok(op) => {
                 if let Some(msg) = op {
                     match msg.payload {
-                        Some(Payload::BlockWithTrustedDataV4(payload)) => {
+                        Some(Payload::BlockWithTrustedData(payload)) => {
                             let entry: TrustedDataEntry = payload.try_into()?;
                             if entry.block.is_header_only() {
                                 Err(ProtocolError::OtherOwned(format!("trusted entry block {} is header only", entry.block.hash())))
@@ -52,7 +52,7 @@ impl<'a, 'b> TrustedEntryStream<'a, 'b> {
                             Ok(None)
                         }
                         _ => Err(ProtocolError::UnexpectedMessage(
-                            stringify!(Payload::BlockWithTrustedDataV4 | Payload::DoneBlocksWithTrustedData),
+                            stringify!(Payload::BlockWithTrustedData | Payload::DoneBlocksWithTrustedData),
                             msg.payload.as_ref().map(|v| v.into()),
                         )),
                     }

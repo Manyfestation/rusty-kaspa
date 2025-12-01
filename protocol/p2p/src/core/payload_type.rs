@@ -27,7 +27,6 @@ pub enum KaspadMessagePayloadType {
     RequestNextPruningPointUtxoSetChunk,
     DonePruningPointUtxoSetChunks,
     IbdBlockLocatorHighestHashNotFound,
-    BlockWithTrustedData,
     DoneBlocksWithTrustedData,
     RequestPruningPointAndItsAnticone,
     BlockHeaders,
@@ -40,7 +39,7 @@ pub enum KaspadMessagePayloadType {
     RequestPruningPointProof,
     PruningPointProof,
     Ready,
-    BlockWithTrustedDataV4,
+    BlockWithTrustedData,
     TrustedData,
     RequestIbdChainBlockLocator,
     IbdChainBlockLocator,
@@ -81,7 +80,6 @@ impl From<&KaspadMessagePayload> for KaspadMessagePayloadType {
             KaspadMessagePayload::IbdBlockLocatorHighestHashNotFound(_) => {
                 KaspadMessagePayloadType::IbdBlockLocatorHighestHashNotFound
             }
-            KaspadMessagePayload::BlockWithTrustedData(_) => KaspadMessagePayloadType::BlockWithTrustedData,
             KaspadMessagePayload::DoneBlocksWithTrustedData(_) => KaspadMessagePayloadType::DoneBlocksWithTrustedData,
             KaspadMessagePayload::RequestPruningPointAndItsAnticone(_) => KaspadMessagePayloadType::RequestPruningPointAndItsAnticone,
             KaspadMessagePayload::BlockHeaders(_) => KaspadMessagePayloadType::BlockHeaders,
@@ -94,7 +92,7 @@ impl From<&KaspadMessagePayload> for KaspadMessagePayloadType {
             KaspadMessagePayload::RequestPruningPointProof(_) => KaspadMessagePayloadType::RequestPruningPointProof,
             KaspadMessagePayload::PruningPointProof(_) => KaspadMessagePayloadType::PruningPointProof,
             KaspadMessagePayload::Ready(_) => KaspadMessagePayloadType::Ready,
-            KaspadMessagePayload::BlockWithTrustedDataV4(_) => KaspadMessagePayloadType::BlockWithTrustedDataV4,
+            KaspadMessagePayload::BlockWithTrustedData(_) => KaspadMessagePayloadType::BlockWithTrustedData,
             KaspadMessagePayload::TrustedData(_) => KaspadMessagePayloadType::TrustedData,
             KaspadMessagePayload::RequestIbdChainBlockLocator(_) => KaspadMessagePayloadType::RequestIbdChainBlockLocator,
             KaspadMessagePayload::IbdChainBlockLocator(_) => KaspadMessagePayloadType::IbdChainBlockLocator,

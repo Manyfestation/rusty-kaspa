@@ -115,17 +115,14 @@ impl TryFrom<protowire::PruningPointsMessage> for PruningPointsList {
 impl TryFrom<protowire::TrustedDataMessage> for TrustedDataPackage {
     type Error = ConversionError;
     fn try_from(msg: protowire::TrustedDataMessage) -> Result<Self, Self::Error> {
-        Ok(Self::new(
-            msg.daa_window.into_iter().map(|x| x.try_into()).collect::<Result<Vec<_>, Self::Error>>()?,
-            msg.ghostdag_data.into_iter().map(|x| x.try_into()).collect::<Result<Vec<_>, Self::Error>>()?,
-        ))
+        Ok(Self::new(msg.trusted_sub_dag.into_iter().map(|x| x.try_into()).collect::<Result<Vec<_>, Self::Error>>()?))
     }
 }
 
-impl TryFrom<protowire::BlockWithTrustedDataV4Message> for TrustedDataEntry {
+impl TryFrom<protowire::BlockWithTrustedDataMessage> for TrustedDataEntry {
     type Error = ConversionError;
-    fn try_from(msg: protowire::BlockWithTrustedDataV4Message) -> Result<Self, Self::Error> {
-        Ok(Self::new(msg.block.try_into_ex()?, msg.daa_window_indices, msg.ghostdag_data_indices))
+    fn try_from(msg: protowire::BlockWithTrustedDataMessage) -> Result<Self, Self::Error> {
+        Ok(Self::new(msg.block.try_into_ex()?))
     }
 }
 

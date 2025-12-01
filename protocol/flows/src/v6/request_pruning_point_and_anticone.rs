@@ -8,7 +8,7 @@ use kaspa_p2p_lib::{
     common::ProtocolError,
     dequeue, dequeue_with_request_id, make_response,
     pb::{
-        self, kaspad_message::Payload, BlockWithTrustedDataV4Message, DoneBlocksWithTrustedDataMessage, PruningPointsMessage,
+        self, kaspad_message::Payload, BlockWithTrustedDataMessage, DoneBlocksWithTrustedDataMessage, PruningPointsMessage,
         TrustedDataMessage,
     },
     IncomingRoute, Router,
@@ -62,8 +62,7 @@ impl PruningPointAndItsAnticoneRequestsFlow {
                 .enqueue(make_response!(
                     Payload::TrustedData,
                     TrustedDataMessage {
-                        daa_window: trusted_data.daa_window_blocks.iter().map(|daa_block| daa_block.into()).collect_vec(),
-                        ghostdag_data: trusted_data.ghostdag_blocks.iter().map(|gd| gd.into()).collect_vec()
+                        trusted_sub_dag: trusted_data.daa_window_blocks.iter().map(|daa_block| daa_block.into()).collect_vec(),
                     },
                     request_id
                 ))
@@ -74,9 +73,9 @@ impl PruningPointAndItsAnticoneRequestsFlow {
                     let block = session.async_get_block(hash).await?;
                     self.router
                         .enqueue(make_response!(
-                            Payload::BlockWithTrustedDataV4,
+                            Payload::BlockWithTrustedData,
                             // No need to send window indices in v6
-                            BlockWithTrustedDataV4Message { block: Some((&block).into()), ..Default::default() },
+                            BlockWithTrustedDataMessage { block: Some((&block).into()) },
                             request_id
                         ))
                         .await?;

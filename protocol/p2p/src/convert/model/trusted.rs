@@ -6,7 +6,7 @@
 use kaspa_consensus_core::{
     block::Block,
     blockhash::ORIGIN,
-    trusted::{TrustedBlock, TrustedGhostdagData, TrustedHeader},
+    trusted::{TrustedBlock, TrustedHeader},
     BlockHashMap, BlockHashSet, HashMapCustomHasher,
 };
 
@@ -15,13 +15,12 @@ use crate::common::ProtocolError;
 /// A package of *semi-trusted data* used by a syncing node in order to build
 /// the sub-DAG in the anticone and in the recent past of the synced pruning point
 pub struct TrustedDataPackage {
-    pub daa_window: Vec<TrustedHeader>,
-    pub ghostdag_window: Vec<TrustedGhostdagData>,
+    pub trusted_sub_dag: Vec<TrustedHeader>,
 }
 
 impl TrustedDataPackage {
-    pub fn new(daa_window: Vec<TrustedHeader>, ghostdag_window: Vec<TrustedGhostdagData>) -> Self {
-        Self { daa_window, ghostdag_window }
+    pub fn new(trusted_sub_dag: Vec<TrustedHeader>) -> Self {
+        Self { trusted_sub_dag }
     }
 
     /// Returns the trusted set -- a sub-DAG in the anti-future of the pruning point which contains
@@ -32,11 +31,7 @@ impl TrustedDataPackage {
         let mut set = BlockHashSet::new();
         let mut map = BlockHashMap::new();
 
-        for th in self.ghostdag_window.iter() {
-            map.insert(th.hash, th.ghostdag.clone());
-        }
-
-        for th in self.daa_window.iter() {
+        for th in self.trusted_sub_dag.iter() {
             map.insert(th.header.hash, th.ghostdag.clone());
         }
 
@@ -51,7 +46,7 @@ impl TrustedDataPackage {
             }
         }
 
-        for th in self.daa_window.iter() {
+        for th in self.trusted_sub_dag.iter() {
             if set.insert(th.header.hash) {
                 blocks.push(TrustedBlock::new(Block::from_header_arc(th.header.clone()), th.ghostdag.clone()));
             }
@@ -78,17 +73,10 @@ impl TrustedDataPackage {
 /// A block with DAA/Ghostdag indices corresponding to data location within a `TrustedDataPackage`
 pub struct TrustedDataEntry {
     pub block: Block,
-    pub daa_window_indices: Vec<u64>,
-    pub ghostdag_window_indices: Vec<u64>,
-    //
-    // Rust rewrite note: the indices fields are no longer needed with the way the pruning point anti-future
-    // is maintained now. Meaning we simply build this sub-DAG in a way that the usual traversal operations will
-    // return the correct blocks/data without the need for explicitly provided indices.
-    //
 }
 
 impl TrustedDataEntry {
-    pub fn new(block: Block, daa_window_indices: Vec<u64>, ghostdag_window_indices: Vec<u64>) -> Self {
-        Self { block, daa_window_indices, ghostdag_window_indices }
+    pub fn new(block: Block) -> Self {
+        Self { block }
     }
 }
