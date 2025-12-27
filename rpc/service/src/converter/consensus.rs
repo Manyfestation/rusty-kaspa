@@ -606,7 +606,7 @@ impl ConsensusConverter {
         chain_block_hash: Hash,
     ) -> RpcResult<Vec<RpcConflictingTransaction>> {
         // Use the consensus API to detect conflicting transactions
-        let search_depth = self.config.ghostdag_k().upper_bound() as usize * 4;
+        let search_depth = self.config.ghostdag_k() as usize * 4;
         let conflicts = consensus.async_get_conflicting_transactions(chain_block_hash, search_depth).await?;
 
         let mut rpc_conflicts = Vec::new();

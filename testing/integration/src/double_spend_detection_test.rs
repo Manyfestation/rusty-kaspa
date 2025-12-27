@@ -74,7 +74,7 @@ fn rpc_block_to_mutable(rpc_block: &RpcRawBlock) -> MutableBlock {
         rpc_block.header.bits,
         rpc_block.header.nonce,
         rpc_block.header.daa_score,
-        rpc_block.header.blue_work.into(),
+        rpc_block.header.blue_work,
         rpc_block.header.blue_score,
         rpc_block.header.pruning_point,
     );
@@ -248,7 +248,7 @@ async fn double_spend_detection_test() {
     // Phase 2: Mine blocks for coinbase maturity
     // ============================================================================================
 
-    let coinbase_maturity = SIMNET_PARAMS.coinbase_maturity().before();
+    let coinbase_maturity = SIMNET_PARAMS.coinbase_maturity();
     let blocks_to_mine = coinbase_maturity + 10;
     info!("=== Phase 2: Mining {} blocks for coinbase maturity ===", blocks_to_mine);
     mine_blocks(&client, blocks_to_mine as usize, &event_receiver).await;
@@ -269,12 +269,12 @@ async fn double_spend_detection_test() {
     assert!(spendable_utxos.len() >= 2, "Expected at least 2 spendable UTXOs, got {}", spendable_utxos.len());
 
     // UTXO_1: For concurrent conflict (TX_A vs TX_B in sibling blocks)
-    let utxo_1_outpoint = TransactionOutpoint::from(spendable_utxos[0].outpoint.clone());
+    let utxo_1_outpoint = TransactionOutpoint::from(spendable_utxos[0].outpoint);
     let utxo_1_entry = UtxoEntry::from(spendable_utxos[0].utxo_entry.clone());
     info!("UTXO_1 (concurrent conflict): {:?}", utxo_1_outpoint);
 
     // UTXO_2: For historical conflict (TX_C accepted first, TX_D rejected later)
-    let utxo_2_outpoint = TransactionOutpoint::from(spendable_utxos[1].outpoint.clone());
+    let utxo_2_outpoint = TransactionOutpoint::from(spendable_utxos[1].outpoint);
     let utxo_2_entry = UtxoEntry::from(spendable_utxos[1].utxo_entry.clone());
     info!("UTXO_2 (historical conflict): {:?}", utxo_2_outpoint);
 
@@ -446,7 +446,7 @@ async fn double_spend_detection_test() {
             for conflicting_input in &conflict.conflicting_inputs {
                 let accepted_id = conflicting_input.accepted_transaction_id;
                 let accepting_block = conflicting_input.accepting_chain_block_hash;
-                let double_spent_outpoint = TransactionOutpoint::from(conflicting_input.double_spent_outpoint.clone());
+                let double_spent_outpoint = TransactionOutpoint::from(conflicting_input.double_spent_outpoint);
 
                 // Check for UTXO_1 conflict (TX_A vs TX_B)
                 if double_spent_outpoint == utxo_1_outpoint {

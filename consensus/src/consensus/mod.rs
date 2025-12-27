@@ -25,7 +25,6 @@ use crate::{
             selected_chain::SelectedChainStore,
             statuses::StatusesStoreReader,
             tips::{TipsStore, TipsStoreReader},
-            utxo_diffs::UtxoDiffsStoreReader,
             utxo_set::{UtxoSetStore, UtxoSetStoreReader},
             virtual_state::VirtualState,
             DB,
@@ -518,8 +517,7 @@ impl Consensus {
         // a header is validated whose blue_score is greater than P.B+p:
         let syncer_pp_bscore = self.get_header(new_pruning_point).unwrap().blue_score;
         let syncer_virtual_bscore = self.get_header(syncer_sink).unwrap().blue_score;
-        // [Crescendo]: Remove after()
-        if syncer_virtual_bscore < syncer_pp_bscore + self.config.pruning_depth().after() {
+        if syncer_virtual_bscore < syncer_pp_bscore + self.config.pruning_depth() {
             return Err(ConsensusError::General("declared pruning point is not of sufficient depth"));
         }
         // 3) The syncer pruning point is on the selected chain from that header.
@@ -1106,7 +1104,7 @@ impl ConsensusApi for Consensus {
     // max_blocks has to be greater than the merge set size limit
     fn get_hashes_between(&self, low: Hash, high: Hash, max_blocks: usize) -> ConsensusResult<(Vec<Hash>, Hash)> {
         let _guard = self.pruning_lock.blocking_read();
-        assert!(max_blocks as u64 > self.config.mergeset_size_limit().after());
+        assert!(max_blocks as u64 > self.config.mergeset_size_limit());
         self.validate_block_exists(low)?;
         self.validate_block_exists(high)?;
 
@@ -1298,10 +1296,6 @@ impl ConsensusApi for Consensus {
             .collect::<ConsensusResult<Vec<_>>>()
     }
 
-    fn get_chain_block_utxo_diff(&self, chain_block: Hash) -> ConsensusResult<Arc<kaspa_consensus_core::utxo::utxo_diff::UtxoDiff>> {
-        self.utxo_diffs_store.get(chain_block).unwrap_option().ok_or(ConsensusError::MissingData(chain_block))
-    }
-
     fn is_chain_block(&self, hash: Hash) -> ConsensusResult<bool> {
         self.is_chain_ancestor_of(hash, self.get_sink())
     }
@@ -1400,7 +1394,7 @@ impl ConsensusApi for Consensus {
             .is_pruning_sample(
                 candidate_ghostdag_data.blue_score,
                 selected_parent_ghostdag_data.blue_score,
-                self.config.params.finality_depth().after(),
+                self.config.params.finality_depth(),
             )
             .then_some(())
             .ok_or(ConsensusError::General("pruning candidate is not a pruning sample"))

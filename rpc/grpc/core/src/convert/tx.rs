@@ -116,8 +116,7 @@ from!(item: &kaspa_rpc_core::RpcChainBlockTransactions, protowire::RpcChainBlock
 
 from!(item: &kaspa_rpc_core::RpcConflictingInput, protowire::RpcConflictingInput, {
     Self {
-        double_spent_outpoint_transaction_id: item.double_spent_outpoint.transaction_id.to_string(),
-        double_spent_outpoint_index: item.double_spent_outpoint.index,
+        double_spent_outpoint: Some((&item.double_spent_outpoint).into()),
         accepted_transaction_id: item.accepted_transaction_id.to_string(),
         accepting_chain_block_hash: item.accepting_chain_block_hash.to_string(),
     }
@@ -414,10 +413,11 @@ try_from!(item: &protowire::RpcChainBlockTransactions, kaspa_rpc_core::RpcChainB
 
 try_from!(item: &protowire::RpcConflictingInput, kaspa_rpc_core::RpcConflictingInput, {
     Self {
-        double_spent_outpoint: kaspa_rpc_core::RpcTransactionOutpoint {
-            transaction_id: RpcHash::from_str(&item.double_spent_outpoint_transaction_id)?,
-            index: item.double_spent_outpoint_index,
-        },
+        double_spent_outpoint: item
+            .double_spent_outpoint
+            .as_ref()
+            .ok_or_else(|| RpcError::MissingRpcFieldError("RpcConflictingInput".to_string(), "double_spent_outpoint".to_string()))?
+            .try_into()?,
         accepted_transaction_id: RpcHash::from_str(&item.accepted_transaction_id)?,
         accepting_chain_block_hash: RpcHash::from_str(&item.accepting_chain_block_hash)?,
     }

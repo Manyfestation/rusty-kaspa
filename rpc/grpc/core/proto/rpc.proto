@@ -1072,10 +1072,9 @@ message RpcOptionalTransaction {
 
 // Represents a single conflicting input (double-spent outpoint)
 message RpcConflictingInput {
-  string doubleSpentOutpointTransactionId = 1;
-  uint32 doubleSpentOutpointIndex = 2;
-  string acceptedTransactionId = 3;
-  string acceptingChainBlockHash = 4;
+  RpcOutpoint doubleSpentOutpoint = 1;
+  string acceptedTransactionId = 2;
+  string acceptingChainBlockHash = 3;
 }
 
 // Represents a rejected transaction with all its conflicting inputs

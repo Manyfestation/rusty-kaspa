@@ -496,7 +496,7 @@ impl VirtualStateProcessor {
     /// Traverses backwards from `starting_chain_block_hash` through the selected parent chain.
     /// Stops the search if:
     /// 1. The `conflicting_block_hash` is reached (if the tx was not found untill this block, it will not be found at all).
-    /// 2. The blue score delta from `starting_chain_block_hash` exceeds `4 * ghostdag_k` .
+    /// 2. The blue score delta from `starting_chain_block_hash` exceeds `search_depth` .
     ///
     /// Returns the transaction ID and the block hash if found, or `None` if no spender is found.
     fn find_spending_tx_in_selected_chain(
@@ -684,9 +684,6 @@ impl VirtualStateProcessor {
     }
 
     /// Verifies that a rejected transaction has a valid signature for a specific conflicting input.
-    ///
-    /// This is used to confirm that the rejected transaction was properly signed (i.e., the owner
-    /// intentionally tried to double-spend), rather than being an invalid transaction.
     ///
     /// Returns true if the conflicting input has a valid signature.
     fn verify_conflict_tx_outpoint(&self, tx: &Transaction, conflict: &ConflictingInput) -> bool {
