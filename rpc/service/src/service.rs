@@ -1287,7 +1287,7 @@ NOTE: This error usually indicates an RPC conversion error between the node and 
         Ok(GetVirtualChainFromBlockV2Response {
             removed_chain_block_hashes: chain_path.removed.into(),
             added_chain_block_hashes: chain_path.added.into(),
-            chain_block_accepted_transactions: chain_blocks_accepted_transactions.into(),
+            chain_block_transactions: chain_blocks_accepted_transactions.into(),
         })
     }
 

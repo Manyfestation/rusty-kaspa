@@ -25,6 +25,7 @@ use crate::{
             selected_chain::SelectedChainStore,
             statuses::StatusesStoreReader,
             tips::{TipsStore, TipsStoreReader},
+            utxo_diffs::UtxoDiffsStoreReader,
             utxo_set::{UtxoSetStore, UtxoSetStoreReader},
             virtual_state::VirtualState,
             DB,
@@ -71,8 +72,8 @@ use kaspa_consensus_core::{
     pruning::{PruningPointProof, PruningPointTrustedData, PruningPointsList, PruningProofMetadata},
     trusted::{ExternalGhostdagData, TrustedBlock},
     tx::{
-        MutableTransaction, Transaction, TransactionId, TransactionIndexType, TransactionOutpoint, TransactionQueryResult,
-        TransactionType, UtxoEntry,
+        ConflictingInput, MutableTransaction, Transaction, TransactionId, TransactionIndexType, TransactionOutpoint,
+        TransactionQueryResult, TransactionType, UtxoEntry,
     },
     BlockHashSet, BlueWorkType, ChainPath, HashMapCustomHasher,
 };
@@ -626,6 +627,14 @@ impl ConsensusApi for Consensus {
             num_tips: self.get_tips_len() as u64,
             virtual_stats: self.lkg_virtual_state.load().as_ref().into(),
         }
+    }
+
+    fn get_conflicting_transactions(
+        &self,
+        chain_block_hash: Hash,
+        search_depth: usize,
+    ) -> ConsensusResult<Vec<(Transaction, Vec<ConflictingInput>)>> {
+        Ok(self.virtual_processor.detect_conflicting_transactions_in_chain_block(chain_block_hash, search_depth)?)
     }
 
     fn get_virtual_daa_score(&self) -> u64 {
@@ -1287,6 +1296,10 @@ impl ConsensusApi for Consensus {
                 }
             })
             .collect::<ConsensusResult<Vec<_>>>()
+    }
+
+    fn get_chain_block_utxo_diff(&self, chain_block: Hash) -> ConsensusResult<Arc<kaspa_consensus_core::utxo::utxo_diff::UtxoDiff>> {
+        self.utxo_diffs_store.get(chain_block).unwrap_option().ok_or(ConsensusError::MissingData(chain_block))
     }
 
     fn is_chain_block(&self, hash: Hash) -> ConsensusResult<bool> {

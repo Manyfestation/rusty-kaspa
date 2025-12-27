@@ -106,10 +106,27 @@ from!(item: &kaspa_rpc_core::RpcOptionalUtxoEntryVerboseData, protowire::RpcUtxo
     }
 });
 
-from!(item: &kaspa_rpc_core::RpcChainBlockAcceptedTransactions, protowire::RpcChainBlockAcceptedTransactions, {
+from!(item: &kaspa_rpc_core::RpcChainBlockTransactions, protowire::RpcChainBlockTransactions, {
     Self {
         chain_block_header: Some(protowire::RpcOptionalHeader::from(&item.chain_block_header)),
         accepted_transactions: item.accepted_transactions.iter().map(protowire::RpcOptionalTransaction::from).collect(),
+        conflicting_transactions: item.conflicting_transactions.iter().map(protowire::RpcConflictingTransaction::from).collect(),
+    }
+});
+
+from!(item: &kaspa_rpc_core::RpcConflictingInput, protowire::RpcConflictingInput, {
+    Self {
+        double_spent_outpoint_transaction_id: item.double_spent_outpoint.transaction_id.to_string(),
+        double_spent_outpoint_index: item.double_spent_outpoint.index,
+        accepted_transaction_id: item.accepted_transaction_id.to_string(),
+        accepting_chain_block_hash: item.accepting_chain_block_hash.to_string(),
+    }
+});
+
+from!(item: &kaspa_rpc_core::RpcConflictingTransaction, protowire::RpcConflictingTransaction, {
+    Self {
+        rejected_transaction: Some((&item.rejected_transaction).into()),
+        conflicting_inputs: item.conflicting_inputs.iter().map(protowire::RpcConflictingInput::from).collect(),
     }
 });
 
@@ -382,15 +399,42 @@ try_from!(item: &protowire::RpcAcceptedTransactionIds, kaspa_rpc_core::RpcAccept
     }
 });
 
-try_from!(item: &protowire::RpcChainBlockAcceptedTransactions, kaspa_rpc_core::RpcChainBlockAcceptedTransactions, {
+try_from!(item: &protowire::RpcChainBlockTransactions, kaspa_rpc_core::RpcChainBlockTransactions, {
     Self {
         chain_block_header: item
             .chain_block_header
             .as_ref()
             .map(kaspa_rpc_core::RpcOptionalHeader::try_from)
             .transpose()?
-            .ok_or_else(|| RpcError::MissingRpcFieldError("RpcChainBlockAcceptedTransactions".to_string(), "chain_block_header".to_string()))?,
+            .ok_or_else(|| RpcError::MissingRpcFieldError("RpcChainBlockTransactions".to_string(), "chain_block_header".to_string()))?,
         accepted_transactions: item.accepted_transactions.iter().map(kaspa_rpc_core::RpcOptionalTransaction::try_from).collect::<Result<_, _>>()?,
+        conflicting_transactions: item.conflicting_transactions.iter().map(kaspa_rpc_core::RpcConflictingTransaction::try_from).collect::<Result<_, _>>()?,
+    }
+});
+
+try_from!(item: &protowire::RpcConflictingInput, kaspa_rpc_core::RpcConflictingInput, {
+    Self {
+        double_spent_outpoint: kaspa_rpc_core::RpcTransactionOutpoint {
+            transaction_id: RpcHash::from_str(&item.double_spent_outpoint_transaction_id)?,
+            index: item.double_spent_outpoint_index,
+        },
+        accepted_transaction_id: RpcHash::from_str(&item.accepted_transaction_id)?,
+        accepting_chain_block_hash: RpcHash::from_str(&item.accepting_chain_block_hash)?,
+    }
+});
+
+try_from!(item: &protowire::RpcConflictingTransaction, kaspa_rpc_core::RpcConflictingTransaction, {
+    Self {
+        rejected_transaction: item
+            .rejected_transaction
+            .as_ref()
+            .ok_or_else(|| RpcError::MissingRpcFieldError("RpcConflictingTransaction".to_string(), "rejected_transaction".to_string()))?
+            .try_into()?,
+        conflicting_inputs: item
+            .conflicting_inputs
+            .iter()
+            .map(kaspa_rpc_core::RpcConflictingInput::try_from)
+            .collect::<Result<_, _>>()?,
     }
 });
 

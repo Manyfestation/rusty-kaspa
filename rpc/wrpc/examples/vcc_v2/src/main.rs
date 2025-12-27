@@ -72,7 +72,7 @@ async fn get_vcc_v2() -> Result<()> {
     // keep track of accepted transaction ids
     let mut global_seen_tx = HashSet::<RpcHash>::with_capacity(30_000);
 
-    for acd in response.chain_block_accepted_transactions.iter() {
+    for acd in response.chain_block_transactions.iter() {
         let header = acd.chain_block_header.clone();
 
         let Some(mergeset_block_hash) = header.hash else {

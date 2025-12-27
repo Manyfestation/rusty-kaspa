@@ -1270,9 +1270,25 @@ mod mockery {
 
     test!(GetVirtualChainFromBlockV2Request);
 
-    impl Mock for RpcChainBlockAcceptedTransactions {
+    impl Mock for RpcConflictingInput {
         fn mock() -> Self {
-            RpcChainBlockAcceptedTransactions { chain_block_header: mock(), accepted_transactions: mock() }
+            RpcConflictingInput { double_spent_outpoint: mock(), accepted_transaction_id: mock(), accepting_chain_block_hash: mock() }
+        }
+    }
+
+    test!(RpcConflictingInput);
+
+    impl Mock for RpcConflictingTransaction {
+        fn mock() -> Self {
+            RpcConflictingTransaction { rejected_transaction: mock(), conflicting_inputs: mock() }
+        }
+    }
+
+    test!(RpcConflictingTransaction);
+
+    impl Mock for RpcChainBlockTransactions {
+        fn mock() -> Self {
+            RpcChainBlockTransactions { chain_block_header: mock(), accepted_transactions: mock(), conflicting_transactions: mock() }
         }
     }
 
@@ -1281,7 +1297,7 @@ mod mockery {
             GetVirtualChainFromBlockV2Response {
                 removed_chain_block_hashes: mock(),
                 added_chain_block_hashes: mock(),
-                chain_block_accepted_transactions: mock(),
+                chain_block_transactions: mock(),
             }
         }
     }

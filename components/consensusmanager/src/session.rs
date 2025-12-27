@@ -13,7 +13,10 @@ use kaspa_consensus_core::{
     mass::{ContextualMasses, NonContextualMasses},
     pruning::{PruningPointProof, PruningPointTrustedData, PruningPointsList},
     trusted::{ExternalGhostdagData, TrustedBlock},
-    tx::{MutableTransaction, Transaction, TransactionId, TransactionOutpoint, TransactionQueryResult, TransactionType, UtxoEntry},
+    tx::{
+        ConflictingInput, MutableTransaction, Transaction, TransactionId, TransactionOutpoint, TransactionQueryResult,
+        TransactionType, UtxoEntry,
+    },
     BlockHashSet, BlueWorkType, ChainPath, Hash,
 };
 use kaspa_utils::sync::rwlock::*;
@@ -422,6 +425,14 @@ impl ConsensusSessionOwned {
         self.clone().spawn_blocking(move |c| c.get_blocks_acceptance_data(&hashes, merged_blocks_limit)).await
     }
 
+    /// Returns the UTXO diff of a chain block.
+    pub async fn async_get_chain_block_utxo_diff(
+        &self,
+        chain_block: Hash,
+    ) -> ConsensusResult<Arc<kaspa_consensus_core::utxo::utxo_diff::UtxoDiff>> {
+        self.clone().spawn_blocking(move |c| c.get_chain_block_utxo_diff(chain_block)).await
+    }
+
     pub async fn async_is_chain_block(&self, hash: Hash) -> ConsensusResult<bool> {
         self.clone().spawn_blocking(move |c| c.is_chain_block(hash)).await
     }
@@ -500,6 +511,14 @@ impl ConsensusSessionOwned {
     }
     pub async fn async_intrusive_pruning_point_update(&self, new_pruning_point: Hash, syncer_sink: Hash) -> ConsensusResult<()> {
         self.clone().spawn_blocking(move |c| c.intrusive_pruning_point_update(new_pruning_point, syncer_sink)).await
+    }
+
+    pub async fn async_get_conflicting_transactions(
+        &self,
+        chain_block_hash: Hash,
+        search_depth: usize,
+    ) -> ConsensusResult<Vec<(Transaction, Vec<ConflictingInput>)>> {
+        self.clone().spawn_blocking(move |c| c.get_conflicting_transactions(chain_block_hash, search_depth)).await
     }
 }
 

@@ -406,6 +406,36 @@ impl VerifiableTransaction for ValidatedTransaction<'_> {
     }
 }
 
+/// Represents a transaction input that conflicts with an accepted transaction (double-spend attempt)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictingInput {
+    /// Index of the conflicting input in the rejected transaction
+    pub input_index: usize,
+    /// The outpoint that was double-spent
+    pub double_spent_outpoint: TransactionOutpoint,
+    /// ID of the accepted transaction that successfully spent the outpoint
+    pub accepted_transaction_id: TransactionId,
+    /// Block where the accepted transaction was included
+    pub accepting_block_hash: kaspa_hashes::Hash,
+    /// The UTXO entry that was double-spent (needed for signature verification)
+    pub utxo_entry: UtxoEntry,
+}
+
+impl VerifiableTransaction for (&Transaction, &ConflictingInput) {
+    fn tx(&self) -> &Transaction {
+        self.0
+    }
+
+    fn populated_input(&self, index: usize) -> (&TransactionInput, &UtxoEntry) {
+        (&self.0.inputs[index], &self.1.utxo_entry)
+    }
+
+    fn utxo(&self, index: usize) -> Option<&UtxoEntry> {
+        (index == self.1.input_index).then_some(&self.1.utxo_entry)
+    }
+}
+
 impl AsRef<Transaction> for Transaction {
     fn as_ref(&self) -> &Transaction {
         self

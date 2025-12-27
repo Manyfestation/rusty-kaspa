@@ -1,8 +1,16 @@
-use std::{cmp, collections::HashSet, sync::Arc};
+use std::{
+    cmp,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use kaspa_consensus_core::{
     acceptance_data::{AcceptanceData, MergesetBlockAcceptanceData},
-    tx::{SignableTransaction, Transaction, TransactionId, TransactionIndexType, TransactionOutpoint, UtxoEntry},
+    hashing::sighash::SigHashReusedValuesUnsync,
+    tx::{
+        ConflictingInput, SignableTransaction, Transaction, TransactionId, TransactionIndexType, TransactionOutpoint, UtxoEntry,
+        COINBASE_TRANSACTION_INDEX,
+    },
     utxo::{
         utxo_diff::ImmutableUtxoDiff,
         utxo_inquirer::{UtxoInquirerError, UtxoInquirerFindTxsFromAcceptanceDataError, UtxoInquirerResult},
@@ -10,13 +18,14 @@ use kaspa_consensus_core::{
 };
 use kaspa_core::trace;
 use kaspa_hashes::Hash;
+use kaspa_txscript::{caches::Cache, TxScriptEngine};
 
 use crate::model::{
     services::reachability::ReachabilityService,
     stores::{
-        acceptance_data::AcceptanceDataStoreReader, block_transactions::BlockTransactionsStoreReader, headers::HeaderStoreReader,
-        selected_chain::SelectedChainStoreReader, utxo_diffs::UtxoDiffsStoreReader, utxo_set::UtxoSetStoreReader,
-        virtual_state::VirtualStateStoreReader,
+        acceptance_data::AcceptanceDataStoreReader, block_transactions::BlockTransactionsStoreReader, ghostdag::GhostdagStoreReader,
+        headers::HeaderStoreReader, selected_chain::SelectedChainStoreReader, utxo_diffs::UtxoDiffsStoreReader,
+        utxo_set::UtxoSetStoreReader, virtual_state::VirtualStateStoreReader,
     },
 };
 
@@ -480,5 +489,219 @@ impl VirtualStateProcessor {
                                     */
             }
         }
+    }
+
+    /// Searches the selected parent chain for a transaction that spent the given outpoint.
+    ///
+    /// Traverses backwards from `starting_chain_block_hash` through the selected parent chain.
+    /// Stops the search if:
+    /// 1. The `conflicting_block_hash` is reached (if the tx was not found untill this block, it will not be found at all).
+    /// 2. The blue score delta from `starting_chain_block_hash` exceeds `4 * ghostdag_k` .
+    ///
+    /// Returns the transaction ID and the block hash if found, or `None` if no spender is found.
+    fn find_spending_tx_in_selected_chain(
+        &self,
+        conflicting_block_hash: Hash,
+        starting_chain_block_hash: Hash,
+        maybe_conflicting_outpoint: &TransactionOutpoint,
+        search_depth: usize,
+    ) -> Option<(TransactionId, Hash)> {
+        let starting_blue_score = self.ghostdag_store.get_data(starting_chain_block_hash).ok()?.blue_score;
+        let mut current_chain_block_hash = self.ghostdag_store.get_data(starting_chain_block_hash).ok()?.selected_parent;
+
+        loop {
+            let ghostdag_data = self.ghostdag_store.get_data(current_chain_block_hash).ok()?;
+
+            // If we reached a chain ancestor of the conflicting block, stop the search (= there is no spender tx in the selected chain)
+            if self.reachability_service.is_chain_ancestor_of(current_chain_block_hash, conflicting_block_hash) {
+                return None;
+            }
+
+            // Check if we've exceeded the search depth limit
+            if starting_blue_score.saturating_sub(ghostdag_data.blue_score) >= search_depth as u64 {
+                return None;
+            }
+
+            // Search through all accepted transactions in the mergeset
+            let acceptance_data = self.acceptance_data_store.get(current_chain_block_hash).ok()?;
+            for mbad in acceptance_data.iter() {
+                let block_txs = self.block_transactions_store.get(mbad.block_hash).ok()?;
+
+                for accepted_tx in &mbad.accepted_transactions {
+                    if let Some(tx) = block_txs.get(accepted_tx.index_within_block as usize) {
+                        for input in &tx.inputs {
+                            if &input.previous_outpoint == maybe_conflicting_outpoint {
+                                return Some((tx.id(), current_chain_block_hash));
+                            }
+                        }
+                    }
+                }
+            }
+
+            current_chain_block_hash = ghostdag_data.selected_parent;
+        }
+    }
+
+    /// Finds the transaction that spent a conflicting outpoint, if any.
+    ///
+    /// Returns the accepted transaction ID and the chain block hash where it was accepted.
+    /// First checks for concurrent conflicts in the same mergeset, then searches historical blocks.
+    fn find_conflicting_transactions(
+        &self,
+        tx: &Transaction,
+        chain_block_hash: Hash,
+        conflicting_block_hash: Hash,
+        accepted_outpoints: &HashMap<TransactionOutpoint, TransactionId>,
+        search_depth: usize,
+    ) -> Result<Vec<ConflictingInput>, UtxoInquirerError> {
+        let mut conflicting_transactions = Vec::new();
+
+        for input in tx.inputs.iter() {
+            // If current input is present in utxo set, continue
+            if self.virtual_stores.read().utxo_set.get(&input.previous_outpoint).is_ok() {
+                continue;
+            }
+
+            let conflicting_outpoint = input.previous_outpoint;
+
+            // Check for conflict in the same mergeset
+            if let Some(accepted_tx_id) = accepted_outpoints.get(&conflicting_outpoint) {
+                // Fetch the accepted transaction to get the UtxoEntry
+                if let Some(utxo_entry) = self.get_utxo_entry_for_outpoint(*accepted_tx_id, chain_block_hash, &conflicting_outpoint) {
+                    conflicting_transactions.push(ConflictingInput {
+                        input_index: tx.inputs.iter().position(|i| i.previous_outpoint == conflicting_outpoint).unwrap(),
+                        double_spent_outpoint: conflicting_outpoint,
+                        accepted_transaction_id: *accepted_tx_id,
+                        accepting_block_hash: chain_block_hash,
+                        utxo_entry,
+                    });
+                }
+            }
+            // Check for conflict in ancestor chain blocks
+            else if let Some((tx_id, block_hash)) =
+                self.find_spending_tx_in_selected_chain(conflicting_block_hash, chain_block_hash, &conflicting_outpoint, search_depth)
+            {
+                // Fetch the accepted transaction to get the UtxoEntry
+                if let Some(utxo_entry) = self.get_utxo_entry_for_outpoint(tx_id, block_hash, &conflicting_outpoint) {
+                    conflicting_transactions.push(ConflictingInput {
+                        input_index: tx.inputs.iter().position(|i| i.previous_outpoint == conflicting_outpoint).unwrap(),
+                        double_spent_outpoint: conflicting_outpoint,
+                        accepted_transaction_id: tx_id,
+                        accepting_block_hash: block_hash,
+                        utxo_entry,
+                    });
+                }
+            }
+        }
+
+        Ok(conflicting_transactions)
+    }
+
+    /// Helper to fetch the UtxoEntry for a specific outpoint from an accepted transaction.
+    fn get_utxo_entry_for_outpoint(
+        &self,
+        accepted_tx_id: TransactionId,
+        accepting_block_hash: Hash,
+        outpoint: &TransactionOutpoint,
+    ) -> Option<UtxoEntry> {
+        let populated_txs =
+            self.get_populated_transactions_by_accepting_block(Some(vec![accepted_tx_id]), accepting_block_hash).ok()?;
+
+        let accepted_tx = populated_txs.first()?;
+
+        // Find the UtxoEntry that matches this outpoint
+        accepted_tx.entries.iter().zip(accepted_tx.tx.inputs.iter()).find_map(|(entry, inp)| {
+            if inp.previous_outpoint == *outpoint {
+                entry.clone()
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn detect_conflicting_transactions_in_chain_block(
+        &self,
+        chain_block_hash: Hash,
+        search_depth: usize,
+    ) -> UtxoInquirerResult<Vec<(Transaction, Vec<ConflictingInput>)>> {
+        let mut unaccepted_transactions = Vec::<(Transaction, Hash)>::new();
+        let mut accepted_outpoints = HashMap::new(); // outpoint -> (accepted_tx_id, block_hash)
+        let mut accepted_tx_ids = HashSet::new();
+        let acceptance_data = self
+            .acceptance_data_store
+            .get(chain_block_hash)
+            .map_err(|_| UtxoInquirerError::MissingAcceptanceDataForChainBlock(chain_block_hash))?;
+
+        // For each block in the mergeset, collect all unaccepted transactions, while also tracking all accepted tx's outpoints
+        for block_data in acceptance_data.iter() {
+            let block_txs = self
+                .block_transactions_store
+                .get(block_data.block_hash)
+                .map_err(|_| UtxoInquirerError::MissingBlockFromBlockTxStore(block_data.block_hash))?;
+
+            // Create a boolean mask of the block's accepted transactions from the acceptance data
+            let mut is_accepted = vec![false; block_txs.len()];
+            for atx in block_data.accepted_transactions.iter() {
+                is_accepted[atx.index_within_block as usize] = true;
+            }
+
+            // Compare each tx in the block with the acceptance data
+            for (i, tx) in block_txs.iter().enumerate() {
+                if is_accepted[i] {
+                    for input in tx.inputs.iter() {
+                        accepted_outpoints.insert(input.previous_outpoint, tx.id());
+                        accepted_tx_ids.insert(tx.id());
+                    }
+                } else if i != COINBASE_TRANSACTION_INDEX {
+                    // If the transaction is not included in the merge block accepted transactions, and it's not a coinbase, it's an unaccepted transaction
+                    unaccepted_transactions.push((tx.clone(), block_data.block_hash));
+                }
+            }
+        }
+
+        let mut conflicting_transactions = Vec::<(Transaction, Vec<ConflictingInput>)>::new();
+        let mut seen_conflicting_tx_ids = HashSet::<TransactionId>::new();
+
+        for (tx, block_hash) in unaccepted_transactions {
+            // For each unaccepted transaction, if it got accepted in another block or already seen as conflicting, skip it
+            if accepted_tx_ids.contains(&tx.id()) || seen_conflicting_tx_ids.contains(&tx.id()) {
+                continue;
+            }
+
+            seen_conflicting_tx_ids.insert(tx.id());
+
+            // An unaccepted transaction found, try to find conflicting transactions for all of its inputs
+            let conflicts =
+                self.find_conflicting_transactions(&tx, chain_block_hash, block_hash, &accepted_outpoints, search_depth)?;
+            // Filter to only include conflicts with valid signatures (= true double-spend attempts)
+            let verified_conflicts: Vec<_> =
+                conflicts.into_iter().filter(|conflict| self.verify_conflict_tx_outpoint(&tx, conflict)).collect();
+            if !verified_conflicts.is_empty() {
+                conflicting_transactions.push((tx, verified_conflicts));
+            }
+        }
+        Ok(conflicting_transactions)
+    }
+
+    /// Verifies that a rejected transaction has a valid signature for a specific conflicting input.
+    ///
+    /// This is used to confirm that the rejected transaction was properly signed (i.e., the owner
+    /// intentionally tried to double-spend), rather than being an invalid transaction.
+    ///
+    /// Returns true if the conflicting input has a valid signature.
+    fn verify_conflict_tx_outpoint(&self, tx: &Transaction, conflict: &ConflictingInput) -> bool {
+        // Verify the script using TxScriptEngine
+        let sig_cache = Cache::new(10);
+        let reused_values = SigHashReusedValuesUnsync::new();
+
+        // The tuple (tx, conflict) implements VerifiableTransaction for single-input verification
+        let verifiable_tx = (tx, conflict);
+        let input_idx = conflict.input_index;
+        let input = &tx.inputs[input_idx];
+        let utxo_entry = &conflict.utxo_entry;
+
+        TxScriptEngine::from_transaction_input(&verifiable_tx, input, input_idx, utxo_entry, &reused_values, &sig_cache)
+            .execute()
+            .is_ok()
     }
 }

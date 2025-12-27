@@ -19,6 +19,72 @@ pub type RpcTransactionId = TransactionId;
 pub type RpcScriptVec = ScriptVec;
 pub type RpcScriptPublicKey = ScriptPublicKey;
 
+/// Represents a single conflicting input (double-spent outpoint)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcConflictingInput {
+    pub double_spent_outpoint: RpcTransactionOutpoint,
+    pub accepted_transaction_id: RpcTransactionId,
+    pub accepting_chain_block_hash: RpcHash,
+}
+
+impl Serializer for RpcConflictingInput {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        store!(u16, &1, writer)?;
+        serialize!(RpcTransactionOutpoint, &self.double_spent_outpoint, writer)?;
+        store!(RpcTransactionId, &self.accepted_transaction_id, writer)?;
+        store!(RpcHash, &self.accepting_chain_block_hash, writer)?;
+        Ok(())
+    }
+}
+
+impl Deserializer for RpcConflictingInput {
+    fn deserialize<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let _version = load!(u16, reader)?;
+        let double_spent_outpoint = deserialize!(RpcTransactionOutpoint, reader)?;
+        let accepted_transaction_id = load!(RpcTransactionId, reader)?;
+        let accepting_chain_block_hash = load!(RpcHash, reader)?;
+        Ok(Self { double_spent_outpoint, accepted_transaction_id, accepting_chain_block_hash })
+    }
+}
+
+/// Represents a rejected transaction with all its conflicting inputs
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcConflictingTransaction {
+    pub rejected_transaction: RpcTransaction,
+    pub conflicting_inputs: Vec<RpcConflictingInput>,
+}
+
+impl Serializer for RpcConflictingTransaction {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        store!(u16, &2, writer)?;
+        serialize!(RpcTransaction, &self.rejected_transaction, writer)?;
+        serialize!(Vec<RpcConflictingInput>, &self.conflicting_inputs, writer)?;
+        Ok(())
+    }
+}
+
+impl Deserializer for RpcConflictingTransaction {
+    fn deserialize<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let _version = load!(u16, reader)?;
+        let rejected_transaction = deserialize!(RpcTransaction, reader)?;
+        let conflicting_inputs = if _version >= 2 {
+            deserialize!(Vec<RpcConflictingInput>, reader)?
+        } else {
+            // Backwards compatibility with version 1, read old fields but convert to new format
+            let accepted_transaction_id = load!(RpcTransactionId, reader)?;
+            let accepting_chain_block_hash = load!(RpcHash, reader)?;
+            vec![RpcConflictingInput {
+                double_spent_outpoint: RpcTransactionOutpoint { transaction_id: TransactionId::default(), index: 0 },
+                accepted_transaction_id,
+                accepting_chain_block_hash,
+            }]
+        };
+        Ok(Self { rejected_transaction, conflicting_inputs })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcUtxoEntry {
@@ -402,30 +468,33 @@ pub struct RpcAcceptedTransactionIds {
     pub accepted_transaction_ids: Vec<RpcTransactionId>,
 }
 
-/// Represents accepted transaction ids
+/// Represents chain block transactions
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RpcChainBlockAcceptedTransactions {
+pub struct RpcChainBlockTransactions {
     pub chain_block_header: RpcOptionalHeader,
     pub accepted_transactions: Vec<RpcOptionalTransaction>,
+    pub conflicting_transactions: Vec<RpcConflictingTransaction>,
 }
 
-impl Serializer for RpcChainBlockAcceptedTransactions {
+impl Serializer for RpcChainBlockTransactions {
     fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
         store!(u16, &1, writer)?;
         serialize!(RpcOptionalHeader, &self.chain_block_header, writer)?;
         serialize!(Vec<RpcOptionalTransaction>, &self.accepted_transactions, writer)?;
+        serialize!(Vec<RpcConflictingTransaction>, &self.conflicting_transactions, writer)?;
 
         Ok(())
     }
 }
 
-impl Deserializer for RpcChainBlockAcceptedTransactions {
+impl Deserializer for RpcChainBlockTransactions {
     fn deserialize<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
         let _struct_version = load!(u16, reader)?;
         let chain_block_header = deserialize!(RpcOptionalHeader, reader)?;
         let accepted_transactions = deserialize!(Vec<RpcOptionalTransaction>, reader)?;
+        let conflicting_transactions = deserialize!(Vec<RpcConflictingTransaction>, reader)?;
 
-        Ok(Self { chain_block_header, accepted_transactions })
+        Ok(Self { chain_block_header, accepted_transactions, conflicting_transactions })
     }
 }

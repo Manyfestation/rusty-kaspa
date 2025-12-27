@@ -21,8 +21,8 @@ use crate::{
     pruning::{PruningPointProof, PruningPointTrustedData, PruningPointsList, PruningProofMetadata},
     trusted::{ExternalGhostdagData, TrustedBlock},
     tx::{
-        MutableTransaction, Transaction, TransactionId, TransactionIndexType, TransactionOutpoint, TransactionQueryResult,
-        TransactionType, UtxoEntry,
+        ConflictingInput, MutableTransaction, Transaction, TransactionId, TransactionIndexType, TransactionOutpoint,
+        TransactionQueryResult, TransactionType, UtxoEntry,
     },
     BlockHashSet, BlueWorkType, ChainPath,
 };
@@ -206,6 +206,14 @@ pub trait ConsensusApi: Send + Sync {
         unimplemented!()
     }
 
+    fn get_conflicting_transactions(
+        &self,
+        chain_block_hash: Hash,
+        search_depth: usize,
+    ) -> ConsensusResult<Vec<(Transaction, Vec<ConflictingInput>)>> {
+        unimplemented!()
+    }
+
     fn get_virtual_parents(&self) -> BlockHashSet {
         unimplemented!()
     }
@@ -351,6 +359,11 @@ pub trait ConsensusApi: Send + Sync {
         hashes: &[Hash],
         merged_blocks_limit: Option<usize>,
     ) -> ConsensusResult<Vec<Arc<AcceptanceData>>> {
+        unimplemented!()
+    }
+
+    /// Returns the UTXO diff of a chain block.
+    fn get_chain_block_utxo_diff(&self, chain_block: Hash) -> ConsensusResult<Arc<crate::utxo::utxo_diff::UtxoDiff>> {
         unimplemented!()
     }
 

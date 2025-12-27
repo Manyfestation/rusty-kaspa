@@ -1070,9 +1070,24 @@ message RpcOptionalTransaction {
   optional RpcOptionalTransactionVerboseData verboseData = 10;
 }
 
-message RpcChainBlockAcceptedTransactions {
+// Represents a single conflicting input (double-spent outpoint)
+message RpcConflictingInput {
+  string doubleSpentOutpointTransactionId = 1;
+  uint32 doubleSpentOutpointIndex = 2;
+  string acceptedTransactionId = 3;
+  string acceptingChainBlockHash = 4;
+}
+
+// Represents a rejected transaction with all its conflicting inputs
+message RpcConflictingTransaction {
+  RpcTransaction rejectedTransaction = 1;
+  repeated RpcConflictingInput conflictingInputs = 2;
+}
+
+message RpcChainBlockTransactions {
   RpcOptionalHeader chainBlockHeader = 2;
   repeated RpcOptionalTransaction acceptedTransactions = 3;
+  repeated RpcConflictingTransaction conflictingTransactions = 4;
 }
 
 /// GetVirtualChainFromBlockV2RequestMessage requests the virtual selected
@@ -1092,7 +1107,7 @@ message GetVirtualChainFromBlockV2ResponseMessage {
   repeated string addedChainBlockHashes = 2;
 
   // Will be filled depending on the supplied RpcDataVerbosityLevel.
-  repeated RpcChainBlockAcceptedTransactions chainBlockAcceptedTransactions = 3;
+  repeated RpcChainBlockTransactions chainBlockTransactions = 3;
 
   RPCError error = 1000;
 }

@@ -20,12 +20,12 @@ use kaspa_mining::model::{owner_txs::OwnerTransactions, TransactionIdSet};
 use kaspa_notify::converter::Converter;
 use kaspa_rpc_core::{
     BlockAddedNotification, Notification, RpcAcceptanceDataVerbosity, RpcAcceptedTransactionIds, RpcBlock, RpcBlockVerboseData,
-    RpcChainBlockAcceptedTransactions, RpcError, RpcHash, RpcHeaderVerbosity, RpcMempoolEntry, RpcMempoolEntryByAddress,
-    RpcMergesetBlockAcceptanceDataVerbosity, RpcOptionalHeader, RpcOptionalTransaction, RpcOptionalTransactionInput,
-    RpcOptionalTransactionInputVerboseData, RpcOptionalTransactionOutput, RpcOptionalTransactionOutputVerboseData,
-    RpcOptionalTransactionVerboseData, RpcOptionalUtxoEntry, RpcOptionalUtxoEntryVerboseData, RpcResult, RpcTransaction,
-    RpcTransactionInput, RpcTransactionInputVerboseDataVerbosity, RpcTransactionInputVerbosity, RpcTransactionOutput,
-    RpcTransactionOutputVerboseData, RpcTransactionOutputVerboseDataVerbosity, RpcTransactionOutputVerbosity,
+    RpcChainBlockTransactions, RpcConflictingInput, RpcConflictingTransaction, RpcError, RpcHash, RpcHeaderVerbosity, RpcMempoolEntry,
+    RpcMempoolEntryByAddress, RpcMergesetBlockAcceptanceDataVerbosity, RpcOptionalHeader, RpcOptionalTransaction,
+    RpcOptionalTransactionInput, RpcOptionalTransactionInputVerboseData, RpcOptionalTransactionOutput,
+    RpcOptionalTransactionOutputVerboseData, RpcOptionalTransactionVerboseData, RpcOptionalUtxoEntry, RpcOptionalUtxoEntryVerboseData,
+    RpcResult, RpcTransaction, RpcTransactionInput, RpcTransactionInputVerboseDataVerbosity, RpcTransactionInputVerbosity,
+    RpcTransactionOutput, RpcTransactionOutputVerboseData, RpcTransactionOutputVerboseDataVerbosity, RpcTransactionOutputVerbosity,
     RpcTransactionVerboseData, RpcTransactionVerboseDataVerbosity, RpcTransactionVerbosity, RpcUtxoEntryVerboseDataVerbosity,
     RpcUtxoEntryVerbosity,
 };
@@ -599,13 +599,48 @@ impl ConsensusConverter {
         Ok(mergeset_accepted_transactions)
     }
 
+    /// Converts consensus conflicting transactions to RPC format
+    async fn get_conflicting_transactions_rpc(
+        &self,
+        consensus: &ConsensusProxy,
+        chain_block_hash: Hash,
+    ) -> RpcResult<Vec<RpcConflictingTransaction>> {
+        // Use the consensus API to detect conflicting transactions
+        let search_depth = self.config.ghostdag_k().upper_bound() as usize * 4;
+        let conflicts = consensus.async_get_conflicting_transactions(chain_block_hash, search_depth).await?;
+
+        let mut rpc_conflicts = Vec::new();
+        for (rejected_tx, tx_conflicts) in conflicts {
+            // Get the block header for verbose data (use the first conflict's accepting block for reference)
+            let header = match tx_conflicts.first() {
+                Some(c) => consensus.async_get_header(c.accepting_block_hash).await.ok(),
+                None => None,
+            };
+            let full_tx = self.get_transaction(consensus, &rejected_tx, header.as_deref(), true);
+
+            // Convert all conflicting inputs to RPC format
+            let conflicting_inputs: Vec<RpcConflictingInput> = tx_conflicts
+                .iter()
+                .map(|conflict| RpcConflictingInput {
+                    double_spent_outpoint: conflict.double_spent_outpoint.into(),
+                    accepted_transaction_id: conflict.accepted_transaction_id,
+                    accepting_chain_block_hash: conflict.accepting_block_hash,
+                })
+                .collect();
+
+            rpc_conflicts.push(RpcConflictingTransaction { rejected_transaction: full_tx, conflicting_inputs });
+        }
+
+        Ok(rpc_conflicts)
+    }
+
     pub async fn get_chain_blocks_accepted_transactions(
         &self,
         consensus: &ConsensusProxy,
         verbosity: &RpcAcceptanceDataVerbosity,
         chain_path: &ChainPath,
         merged_blocks_limit: Option<usize>,
-    ) -> RpcResult<Vec<RpcChainBlockAcceptedTransactions>> {
+    ) -> RpcResult<Vec<RpcChainBlockTransactions>> {
         if verbosity.accepting_chain_header_verbosity.is_none() && verbosity.mergeset_block_acceptance_data_verbosity.is_none() {
             // specified verbosity doesn't need acceptance data
             return Ok(Vec::new());
@@ -613,8 +648,7 @@ impl ConsensusConverter {
 
         let chain_block_mergeset_acceptance_data_vec =
             consensus.async_get_blocks_acceptance_data(chain_path.added.clone(), merged_blocks_limit).await.unwrap();
-        let mut rpc_acceptance_data =
-            Vec::<RpcChainBlockAcceptedTransactions>::with_capacity(chain_block_mergeset_acceptance_data_vec.len());
+        let mut rpc_acceptance_data = Vec::<RpcChainBlockTransactions>::with_capacity(chain_block_mergeset_acceptance_data_vec.len());
 
         // for each chain block
         for (accepting_chain_hash, chain_block_mergeset_acceptance_data) in
@@ -646,14 +680,18 @@ impl ConsensusConverter {
                     )
                     .await?;
 
-                rpc_acceptance_data.push(RpcChainBlockAcceptedTransactions {
+                let conflicting_transactions = self.get_conflicting_transactions_rpc(consensus, *accepting_chain_hash).await?;
+
+                rpc_acceptance_data.push(RpcChainBlockTransactions {
                     chain_block_header: accepting_chain_header_with_verbosity,
                     accepted_transactions: mergeset_transactions_with_verbosity,
+                    conflicting_transactions,
                 });
             } else {
-                rpc_acceptance_data.push(RpcChainBlockAcceptedTransactions {
+                rpc_acceptance_data.push(RpcChainBlockTransactions {
                     chain_block_header: accepting_chain_header_with_verbosity,
                     accepted_transactions: Default::default(),
+                    conflicting_transactions: Default::default(),
                 });
             };
         }
