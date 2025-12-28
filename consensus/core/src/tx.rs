@@ -428,7 +428,9 @@ impl VerifiableTransaction for (&Transaction, &ConflictingInput) {
     }
 
     fn populated_input(&self, index: usize) -> (&TransactionInput, &UtxoEntry) {
-        (&self.0.inputs[index], &self.1.utxo_entry)
+        // The populated input must be the one that conflicts
+        assert_eq!(index, self.1.input_index);
+        (&self.0.inputs[self.1.input_index], &self.1.utxo_entry)
     }
 
     fn utxo(&self, index: usize) -> Option<&UtxoEntry> {
