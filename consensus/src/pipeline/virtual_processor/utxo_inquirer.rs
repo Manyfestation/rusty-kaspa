@@ -8,8 +8,8 @@ use kaspa_consensus_core::{
     acceptance_data::{AcceptanceData, MergesetBlockAcceptanceData},
     hashing::sighash::SigHashReusedValuesUnsync,
     tx::{
-        ConflictingInput, SignableTransaction, Transaction, TransactionId, TransactionIndexType, TransactionOutpoint, UtxoEntry,
-        COINBASE_TRANSACTION_INDEX,
+        ConflictingInput, PopulatedConflictingInputsTx, SignableTransaction, Transaction, TransactionId, TransactionIndexType,
+        TransactionOutpoint, UtxoEntry, COINBASE_TRANSACTION_INDEX,
     },
     utxo::{
         utxo_diff::ImmutableUtxoDiff,
@@ -673,9 +673,8 @@ impl VirtualStateProcessor {
             // An unaccepted transaction found, try to find conflicting transactions for all of its inputs
             let conflicts =
                 self.find_conflicting_transactions(&tx, chain_block_hash, block_hash, &accepted_outpoints, search_depth)?;
-            // Filter to only include conflicts with valid signatures (= true double-spend attempts)
-            let verified_conflicts: Vec<_> =
-                conflicts.into_iter().filter(|conflict| self.verify_conflict_tx_outpoint(&tx, conflict)).collect();
+
+            let verified_conflicts = self.verify_conflicting_inputs(&tx, conflicts);
             if !verified_conflicts.is_empty() {
                 conflicting_transactions.push((tx, verified_conflicts));
             }
@@ -683,22 +682,30 @@ impl VirtualStateProcessor {
         Ok(conflicting_transactions)
     }
 
-    /// Verifies that a rejected transaction has a valid signature for a specific conflicting input.
+    /// Verifies that a rejected transaction has a valid signature for all conflicting inputs.
     ///
-    /// Returns true if the conflicting input has a valid signature.
-    fn verify_conflict_tx_outpoint(&self, tx: &Transaction, conflict: &ConflictingInput) -> bool {
-        // Verify the script using TxScriptEngine
+    /// Returns a list of conflicts that passed signature verification.
+    fn verify_conflicting_inputs(&self, tx: &Transaction, conflicts: Vec<ConflictingInput>) -> Vec<ConflictingInput> {
         let sig_cache = Cache::new(10);
         let reused_values = SigHashReusedValuesUnsync::new();
 
-        // The tuple (tx, conflict) implements VerifiableTransaction for single-input verification
-        let verifiable_tx = (tx, conflict);
-        let input_idx = conflict.input_index;
-        let input = &tx.inputs[input_idx];
-        let utxo_entry = &conflict.utxo_entry;
+        // Create a populated transaction with only the conflicting inputs
+        let verifiable_tx = PopulatedConflictingInputsTx::new(tx, &conflicts);
 
-        TxScriptEngine::from_transaction_input(&verifiable_tx, input, input_idx, utxo_entry, &reused_values, &sig_cache)
-            .execute()
-            .is_ok()
+        conflicts
+            .into_iter()
+            .filter(|conflict| {
+                let input_idx = conflict.input_index;
+                let input = &tx.inputs[input_idx];
+                let utxo_entry = &conflict.utxo_entry;
+
+                // Verify the current (conflicting) input.
+                // Note that PopulatedConflictingInputsTx only populates the UTXOs that are in the conflicts list,
+                // so if the script tries to access a UTXO we don't have we would not be able to verify it
+                TxScriptEngine::from_transaction_input(&verifiable_tx, input, input_idx, utxo_entry, &reused_values, &sig_cache)
+                    .execute()
+                    .is_ok()
+            })
+            .collect()
     }
 }

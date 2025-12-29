@@ -422,19 +422,36 @@ pub struct ConflictingInput {
     pub utxo_entry: UtxoEntry,
 }
 
-impl VerifiableTransaction for (&Transaction, &ConflictingInput) {
+pub struct PopulatedConflictingInputsTx<'a> {
+    tx: &'a Transaction,
+    // Maps input_index -> UtxoEntry if its a conflicting input, or else None
+    entries: Vec<Option<UtxoEntry>>,
+}
+impl<'a> PopulatedConflictingInputsTx<'a> {
+    pub fn new(tx: &'a Transaction, conflicts: &[ConflictingInput]) -> Self {
+        let mut entries = vec![None; tx.inputs.len()];
+        for conflict in conflicts {
+            entries[conflict.input_index] = Some(conflict.utxo_entry.clone());
+        }
+
+        Self { tx, entries }
+    }
+}
+
+impl VerifiableTransaction for PopulatedConflictingInputsTx<'_> {
     fn tx(&self) -> &Transaction {
-        self.0
+        self.tx
     }
 
     fn populated_input(&self, index: usize) -> (&TransactionInput, &UtxoEntry) {
-        // The populated input must be the one that conflicts
-        assert_eq!(index, self.1.input_index);
-        (&self.0.inputs[self.1.input_index], &self.1.utxo_entry)
+        match &self.entries[index] {
+            Some(entry) => (&self.tx.inputs[index], entry),
+            None => panic!("populated_input called for a non-conflicting input {index}"),
+        }
     }
 
     fn utxo(&self, index: usize) -> Option<&UtxoEntry> {
-        (index == self.1.input_index).then_some(&self.1.utxo_entry)
+        self.entries.get(index).and_then(|entry| entry.as_ref())
     }
 }
 
