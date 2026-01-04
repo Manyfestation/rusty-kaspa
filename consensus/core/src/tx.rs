@@ -414,12 +414,12 @@ pub struct ConflictingInput {
     pub input_index: usize,
     /// The outpoint that was double-spent
     pub double_spent_outpoint: TransactionOutpoint,
+    /// The UTXO entry that was double-spent
+    pub double_spent_utxo: UtxoEntry,
     /// ID of the accepted transaction that successfully spent the outpoint
     pub accepted_transaction_id: TransactionId,
     /// Block where the accepted transaction was included
     pub accepting_block_hash: kaspa_hashes::Hash,
-    /// The UTXO entry that was double-spent (needed for signature verification)
-    pub utxo_entry: UtxoEntry,
 }
 
 pub struct PopulatedConflictingInputsTx<'a> {
@@ -431,7 +431,7 @@ impl<'a> PopulatedConflictingInputsTx<'a> {
     pub fn new(tx: &'a Transaction, conflicts: &[ConflictingInput]) -> Self {
         let mut entries = vec![None; tx.inputs.len()];
         for conflict in conflicts {
-            entries[conflict.input_index] = Some(conflict.utxo_entry.clone());
+            entries[conflict.input_index] = Some(conflict.double_spent_utxo.clone());
         }
 
         Self { tx, entries }

@@ -31,4 +31,4 @@ pub mod rpc_perf_benchmarks;
 pub mod rpc_tests;
 
 #[cfg(test)]
-pub mod double_spend_detection_test;
+pub mod double_spend_detection_tests;
