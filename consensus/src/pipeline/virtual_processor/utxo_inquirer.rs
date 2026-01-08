@@ -573,7 +573,7 @@ impl VirtualStateProcessor {
                         double_spent_outpoint: conflicting_outpoint,
                         accepted_transaction_id: *accepted_tx_id,
                         accepting_block_hash: chain_block_hash,
-                        utxo_entry,
+                        double_spent_utxo: utxo_entry,
                     });
                 }
             }
@@ -588,7 +588,7 @@ impl VirtualStateProcessor {
                         double_spent_outpoint: conflicting_outpoint,
                         accepted_transaction_id: tx_id,
                         accepting_block_hash: block_hash,
-                        utxo_entry,
+                        double_spent_utxo: utxo_entry,
                     });
                 }
             }
@@ -674,38 +674,98 @@ impl VirtualStateProcessor {
             let conflicts =
                 self.find_conflicting_transactions(&tx, chain_block_hash, block_hash, &accepted_outpoints, search_depth)?;
 
-            let verified_conflicts = self.verify_conflicting_inputs(&tx, conflicts);
+            let verified_conflicts = verify_conflicting_inputs(&tx, conflicts);
             if !verified_conflicts.is_empty() {
                 conflicting_transactions.push((tx, verified_conflicts));
             }
         }
         Ok(conflicting_transactions)
     }
+}
 
-    /// Verifies that a rejected transaction has a valid signature for all conflicting inputs.
-    ///
-    /// Returns a list of conflicts that passed signature verification.
-    fn verify_conflicting_inputs(&self, tx: &Transaction, conflicts: Vec<ConflictingInput>) -> Vec<ConflictingInput> {
-        let sig_cache = Cache::new(10);
-        let reused_values = SigHashReusedValuesUnsync::new();
+/// Verifies that a rejected transaction has a valid signature for all conflicting inputs.
+///
+/// Returns a list of conflicts that passed signature verification.
+fn verify_conflicting_inputs(tx: &Transaction, conflicts: Vec<ConflictingInput>) -> Vec<ConflictingInput> {
+    let sig_cache = Cache::new(10);
+    let reused_values = SigHashReusedValuesUnsync::new();
 
-        // Create a populated transaction with only the conflicting inputs
-        let verifiable_tx = PopulatedConflictingInputsTx::new(tx, &conflicts);
+    // Create a populated transaction with only the conflicting inputs
+    let verifiable_tx = PopulatedConflictingInputsTx::new(tx, &conflicts);
 
-        conflicts
-            .into_iter()
-            .filter(|conflict| {
-                let input_idx = conflict.input_index;
-                let input = &tx.inputs[input_idx];
-                let utxo_entry = &conflict.utxo_entry;
+    conflicts
+        .into_iter()
+        .filter(|conflict| {
+            let input_idx = conflict.input_index;
+            let input = &tx.inputs[input_idx];
+            let utxo_entry = &conflict.double_spent_utxo;
 
-                // Verify the current (conflicting) input.
-                // Note that PopulatedConflictingInputsTx only populates the UTXOs that are in the conflicts list,
-                // so if the script tries to access a UTXO we don't have we would not be able to verify it
-                TxScriptEngine::from_transaction_input(&verifiable_tx, input, input_idx, utxo_entry, &reused_values, &sig_cache)
-                    .execute()
-                    .is_ok()
-            })
-            .collect()
+            // Verify the current (conflicting) input.
+            // Note that PopulatedConflictingInputsTx only populates the UTXOs that are in the conflicts list,
+            // so if the script tries to access a UTXO we don't have we would not be able to verify it
+            TxScriptEngine::from_transaction_input(&verifiable_tx, input, input_idx, utxo_entry, &reused_values, &sig_cache)
+                .execute()
+                .is_ok()
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kaspa_addresses::{Address, Prefix, Version};
+    use kaspa_consensus_core::{
+        sign::sign,
+        subnets::SUBNETWORK_ID_NATIVE,
+        tx::{ConflictingInput, Transaction, TransactionInput, TransactionOutpoint, TransactionOutput},
+    };
+    use kaspa_txscript::pay_to_address_script;
+    use secp256k1::Keypair;
+
+    #[test]
+    fn test_verify_conflicting_inputs() {
+        let keypair = Keypair::new(secp256k1::SECP256K1, &mut rand::thread_rng());
+        let keypair_wrong = Keypair::new(secp256k1::SECP256K1, &mut rand::thread_rng());
+        let pubkey = keypair.x_only_public_key().0;
+
+        // Create a UTXO that requires a valid signature (P2PK)
+        let address = Address::new(Prefix::Testnet, Version::PubKey, &pubkey.serialize());
+        let script_public_key = pay_to_address_script(&address);
+        let utxo_entry =
+            UtxoEntry { amount: 1000, script_public_key: script_public_key.clone(), block_daa_score: 0, is_coinbase: false };
+        let outpoint = TransactionOutpoint::new(Hash::from_bytes([0u8; 32]), 0);
+
+        let conflict = ConflictingInput {
+            input_index: 0,
+            double_spent_outpoint: outpoint,
+            double_spent_utxo: utxo_entry.clone(),
+            accepted_transaction_id: Hash::from_bytes([0u8; 32]),
+            accepting_block_hash: Hash::from_bytes([0u8; 32]),
+        };
+
+        // Helper to create and sign a transaction
+        let new_signed_tx = |kp: Keypair| {
+            let tx = Transaction::new(
+                0,
+                vec![TransactionInput::new(outpoint, vec![], 0, 0)],
+                vec![TransactionOutput::new(99, script_public_key.clone())],
+                0,
+                SUBNETWORK_ID_NATIVE,
+                0,
+                vec![],
+            );
+            let signable = SignableTransaction::with_entries(tx, vec![utxo_entry.clone()]);
+            sign(signable, kp).tx
+        };
+
+        // Valid signature - conflict should be retained
+        let tx_valid = new_signed_tx(keypair);
+        let verified = verify_conflicting_inputs(&tx_valid, vec![conflict.clone()]);
+        assert_eq!(verified.len(), 1, "Valid signature should retain conflict");
+
+        // Wrong keypair signature - conflict should be filtered out
+        let tx_wrong_key = new_signed_tx(keypair_wrong);
+        let verified = verify_conflicting_inputs(&tx_wrong_key, vec![conflict.clone()]);
+        assert_eq!(verified.len(), 0, "Wrong keypair signature should filter out conflict");
     }
 }
