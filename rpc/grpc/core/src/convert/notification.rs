@@ -34,6 +34,7 @@ from!(item: &kaspa_rpc_core::Notification, Payload, {
         Notification::PruningPointUtxoSetOverride(notification) => {
             Payload::PruningPointUtxoSetOverrideNotification(notification.into())
         },
+        Notification::CovenantTransactions(_) => unreachable!("covenant transaction notifications are wRPC-only"),
     }
 });
 

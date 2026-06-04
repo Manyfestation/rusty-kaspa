@@ -6,7 +6,7 @@ use crate::{error::Error, node::NodeDescriptor};
 use kaspa_consensus_core::network::NetworkType;
 use kaspa_notify::{
     listener::ListenerLifespan,
-    subscription::{MutationPolicies, UtxosChangedMutationPolicy, context::SubscriptionContext},
+    subscription::{Command, MutationPolicies, UtxosChangedMutationPolicy, context::SubscriptionContext},
 };
 use kaspa_rpc_core::{
     api::ctl::RpcCtl,
@@ -22,6 +22,13 @@ pub use workflow_rpc::client::{
 };
 use workflow_serializer::prelude::*;
 type RpcClientNotifier = Arc<Notifier<Notification, ChannelConnection>>;
+
+#[derive(Clone)]
+struct CovenantTransactionsRemoteSubscription {
+    listener_id: ListenerId,
+    watched_covenant_ids: Vec<RpcHash>,
+    covenant_filter: CovenantTransactionFilter,
+}
 
 struct Inner {
     rpc_client: Arc<RpcClient<RpcApiOps>>,
@@ -48,6 +55,7 @@ struct Inner {
     resolver: Mutex<Option<Resolver>>,
     network_id: Mutex<Option<NetworkId>>,
     node_descriptor: Mutex<Option<Arc<NodeDescriptor>>>,
+    covenant_transactions_subscription: Mutex<Option<CovenantTransactionsRemoteSubscription>>,
 }
 
 impl Inner {
@@ -76,6 +84,7 @@ impl Inner {
             RpcApiOps::VirtualDaaScoreChangedNotification,
             RpcApiOps::PruningPointUtxoSetOverrideNotification,
             RpcApiOps::NewBlockTemplateNotification,
+            RpcApiOps::CovenantTransactionsNotification,
         ]
         .into_iter()
         .for_each(|notification_op| {
@@ -119,6 +128,7 @@ impl Inner {
             resolver: Mutex::new(resolver),
             network_id: Mutex::new(network_id),
             node_descriptor: Mutex::new(None),
+            covenant_transactions_subscription: Mutex::new(None),
         };
         Ok(client)
     }
@@ -140,6 +150,21 @@ impl Inner {
     async fn stop_notify_to_client(&self, scope: Scope) -> RpcResult<()> {
         let _response: Serializable<UnsubscribeResponse> =
             self.rpc_client.call(RpcApiOps::Unsubscribe, Serializable(scope)).await.map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    async fn renew_covenant_transactions_subscription(&self) -> RpcResult<()> {
+        let Some(subscription) = self.covenant_transactions_subscription.lock().unwrap().clone() else {
+            return Ok(());
+        };
+
+        let request = NotifyCovenantTransactionsRequest::with_filter(
+            subscription.watched_covenant_ids,
+            subscription.covenant_filter,
+            Command::Start,
+        );
+        let _response: Serializable<NotifyCovenantTransactionsResponse> =
+            self.rpc_client.call(RpcApiOps::NotifyCovenantTransactions, Serializable(request)).await.map_err(|err| err.to_string())?;
         Ok(())
     }
 
@@ -214,12 +239,18 @@ impl Debug for Inner {
 impl SubscriptionManager for Inner {
     async fn start_notify(&self, _: ListenerId, scope: Scope) -> NotifyResult<()> {
         // log_trace!("[WrpcClient] start_notify: {:?}", scope);
+        if matches!(scope, Scope::CovenantTransactions(_)) {
+            return Ok(());
+        }
         self.start_notify_to_client(scope).await.map_err(|err| NotifyError::General(err.to_string()))?;
         Ok(())
     }
 
     async fn stop_notify(&self, _: ListenerId, scope: Scope) -> NotifyResult<()> {
         // log_trace!("[WrpcClient] stop_notify: {:?}", scope);
+        if matches!(scope, Scope::CovenantTransactions(_)) {
+            return Ok(());
+        }
         self.stop_notify_to_client(scope).await.map_err(|err| NotifyError::General(err.to_string()))?;
         Ok(())
     }
@@ -576,6 +607,9 @@ impl KaspaRpcClient {
                         if let Ok(msg) = msg {
                             match msg {
                                 WrpcCtl::Connect => {
+                                    if let Err(err) = inner.renew_covenant_transactions_subscription().await {
+                                        log_error!("error renewing covenant transaction subscription after reconnect: {err}");
+                                    }
                                     inner.rpc_ctl.signal_open().await.expect("(KaspaRpcClient) rpc_ctl.signal_open() error");
                                 }
                                 WrpcCtl::Disconnect => {
@@ -657,6 +691,7 @@ impl RpcApi for KaspaRpcClient {
             GetUtxosByAddresses,
             GetVirtualChainFromBlock,
             GetVirtualChainFromBlockV2,
+            NotifyCovenantTransactions,
             ResolveFinalityConflict,
             Shutdown,
             SubmitBlock,
@@ -684,6 +719,19 @@ impl RpcApi for KaspaRpcClient {
     ///
     /// Stop all notifications for this listener and drop its channel.
     async fn unregister_listener(&self, id: ListenerId) -> RpcResult<()> {
+        let should_stop_covenant_transactions = self
+            .inner
+            .covenant_transactions_subscription
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|subscription| subscription.listener_id == id);
+        if should_stop_covenant_transactions {
+            self.notify_covenant_transactions(Vec::new(), Command::Stop).await.unwrap_or_else(|err| {
+                log_warn!("error stopping covenant transaction notifications while unregistering listener {id}: {err}");
+            });
+            self.inner.covenant_transactions_subscription.lock().unwrap().take();
+        }
         self.notifier().unregister_listener(id)?;
         Ok(())
     }
@@ -697,6 +745,43 @@ impl RpcApi for KaspaRpcClient {
     /// Stop sending notifications of some type to a listener.
     async fn stop_notify(&self, id: ListenerId, scope: Scope) -> RpcResult<()> {
         self.notifier().try_stop_notify(id, scope)?;
+        Ok(())
+    }
+
+    async fn start_notify_covenant_transactions(&self, id: ListenerId, watched_covenant_ids: Vec<RpcHash>) -> RpcResult<()> {
+        self.start_notify_covenant_transactions_with_filter(id, watched_covenant_ids, CovenantTransactionFilter::default()).await
+    }
+
+    async fn start_notify_covenant_transactions_with_filter(
+        &self,
+        id: ListenerId,
+        watched_covenant_ids: Vec<RpcHash>,
+        covenant_filter: CovenantTransactionFilter,
+    ) -> RpcResult<()> {
+        // One active covenant transaction listener per client; starting again replaces it.
+        self.notify_covenant_transactions_with_filter(watched_covenant_ids.clone(), covenant_filter, Command::Start).await?;
+        self.notifier().try_start_notify(id, CovenantTransactionsScope::default().into())?;
+        self.inner.covenant_transactions_subscription.lock().unwrap().replace(CovenantTransactionsRemoteSubscription {
+            listener_id: id,
+            watched_covenant_ids,
+            covenant_filter,
+        });
+        Ok(())
+    }
+
+    async fn stop_notify_covenant_transactions(&self, id: ListenerId, _watched_covenant_ids: Vec<RpcHash>) -> RpcResult<()> {
+        let should_stop = self
+            .inner
+            .covenant_transactions_subscription
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|subscription| subscription.listener_id == id);
+        if should_stop {
+            self.notify_covenant_transactions(Vec::new(), Command::Stop).await?;
+            self.notifier().try_stop_notify(id, CovenantTransactionsScope::default().into())?;
+            self.inner.covenant_transactions_subscription.lock().unwrap().take();
+        }
         Ok(())
     }
 }

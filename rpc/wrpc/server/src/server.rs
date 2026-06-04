@@ -1,21 +1,22 @@
 use crate::{
     collector::{WrpcServiceCollector, WrpcServiceConverter},
     connection::Connection,
+    covenant_transactions::CovenantTransactionsSubscriptionBridge,
     result::Result,
     service::Options,
 };
 use kaspa_grpc_client::GrpcClient;
 use kaspa_notify::{
     connection::ChannelType,
-    events::EVENT_TYPE_ARRAY,
+    events::{EVENT_TYPE_ARRAY, EventSwitches, EventType},
     listener::ListenerLifespan,
     notifier::Notifier,
     scope::Scope,
     subscriber::Subscriber,
-    subscription::{MutationPolicies, UtxosChangedMutationPolicy},
+    subscription::{Command, MutationPolicies, UtxosChangedMutationPolicy},
 };
 use kaspa_rpc_core::{
-    Notification, RpcResult,
+    Notification, NotifyCovenantTransactionsRequest, NotifyCovenantTransactionsResponse, RpcResult,
     api::rpc::{DynRpcService, RpcApi},
     notify::{channel::NotificationChannel, connection::ChannelConnection, mode::NotificationMode},
 };
@@ -35,6 +36,7 @@ pub type WrpcNotifier = Notifier<Notification, Connection>;
 struct RpcCore {
     pub service: Arc<RpcCoreService>,
     pub wrpc_notifier: Arc<WrpcNotifier>,
+    covenant_transactions_bridge: CovenantTransactionsSubscriptionBridge,
 }
 
 struct ServerInner {
@@ -73,7 +75,8 @@ impl Server {
             );
 
             // Prepare notification internals
-            let enabled_events = EVENT_TYPE_ARRAY[..].into();
+            let mut enabled_events: EventSwitches = EVENT_TYPE_ARRAY[..].into();
+            enabled_events[EventType::CovenantTransactions] = false;
             let converter = Arc::new(WrpcServiceConverter::new());
             let collector = Arc::new(WrpcServiceCollector::new(WRPC_SERVER, notification_channel.receiver(), converter));
             let subscriber = Arc::new(Subscriber::new(WRPC_SERVER, enabled_events, service.notifier(), listener_id));
@@ -86,7 +89,7 @@ impl Server {
                 tasks,
                 policies,
             ));
-            Some(RpcCore { service, wrpc_notifier })
+            Some(RpcCore { service, wrpc_notifier, covenant_transactions_bridge: CovenantTransactionsSubscriptionBridge::default() })
         } else {
             None
         };
@@ -147,6 +150,12 @@ impl Server {
     pub async fn disconnect(&self, connection: Connection) {
         // log_info!("WebSocket disconnected: {}", connection.peer());
         if let Some(rpc_core) = &self.inner.rpc_core {
+            self.stop_covenant_transactions_subscription(connection.id()).unwrap_or_else(|err| {
+                log_error!(
+                    "WebSocket {} (disconnected) error unregistering the covenant transaction notification listener: {err}",
+                    connection.peer()
+                );
+            });
             if let Some(listener_id) = connection.listener_id() {
                 rpc_core.wrpc_notifier.unregister_listener(listener_id).unwrap_or_else(|err| {
                     log_error!("WebSocket {} (disconnected) error unregistering the notification listener: {err}", connection.peer());
@@ -206,6 +215,36 @@ impl Server {
             workflow_log::log_trace!("notification unsubscribe[N/A] {scope:?}");
         }
         Ok(())
+    }
+
+    pub async fn notify_covenant_transactions(
+        &self,
+        connection: &Connection,
+        request: NotifyCovenantTransactionsRequest,
+    ) -> RpcResult<NotifyCovenantTransactionsResponse> {
+        match request.command {
+            Command::Start => {
+                let Some(rpc_core) = &self.inner.rpc_core else {
+                    return Err(kaspa_rpc_core::RpcError::UnsupportedFeature);
+                };
+                rpc_core.covenant_transactions_bridge.start(
+                    connection,
+                    rpc_core.service.clone(),
+                    request.watched_covenant_ids,
+                    request.covenant_filter,
+                )?;
+            }
+            Command::Stop => self.stop_covenant_transactions_subscription(connection.id())?,
+        }
+        Ok(NotifyCovenantTransactionsResponse {})
+    }
+
+    pub(crate) fn stop_covenant_transactions_subscription(&self, connection_id: u64) -> RpcResult<()> {
+        if let Some(rpc_core) = self.inner.rpc_core.as_ref() {
+            rpc_core.covenant_transactions_bridge.stop(&rpc_core.service, connection_id)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn verbose(&self) -> bool {

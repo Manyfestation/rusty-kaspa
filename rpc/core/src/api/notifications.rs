@@ -25,7 +25,12 @@ pub enum Notification {
     #[display(fmt = "BlockAdded notification: block hash {}", "_0.block.header.hash")]
     BlockAdded(BlockAddedNotification),
 
-    #[display(fmt = "VirtualChainChanged notification: {} removed blocks, {} added blocks, {} accepted transactions", "_0.removed_chain_block_hashes.len()", "_0.added_chain_block_hashes.len()", "_0.accepted_transaction_ids.len()")]
+    #[display(
+        fmt = "VirtualChainChanged notification: {} removed blocks, {} added blocks, {} accepted transactions",
+        "_0.removed_chain_block_hashes.len()",
+        "_0.added_chain_block_hashes.len()",
+        "_0.accepted_transaction_ids.len()"
+    )]
     VirtualChainChanged(VirtualChainChangedNotification),
 
     #[display(fmt = "FinalityConflict notification: violating block hash {}", "_0.violating_block_hash")]
@@ -48,6 +53,9 @@ pub enum Notification {
 
     #[display(fmt = "NewBlockTemplate notification")]
     NewBlockTemplate(NewBlockTemplateNotification),
+
+    #[display(fmt = "Covenant transaction notification: {} transactions", "_0.transactions.len()")]
+    CovenantTransactions(CovenantTransactionsNotification),
 }
 }
 
@@ -64,6 +72,7 @@ impl Notification {
             Notification::VirtualDaaScoreChanged(v) => to_value(&v),
             Notification::SinkBlueScoreChanged(v) => to_value(&v),
             Notification::VirtualChainChanged(v) => to_value(&v),
+            Notification::CovenantTransactions(v) => to_value(&v),
         }
     }
 }
@@ -158,6 +167,10 @@ impl Serializer for Notification {
                 store!(u16, &8, writer)?;
                 serialize!(NewBlockTemplateNotification, notification, writer)?;
             }
+            Notification::CovenantTransactions(notification) => {
+                store!(u16, &9, writer)?;
+                serialize!(CovenantTransactionsNotification, notification, writer)?;
+            }
         }
         Ok(())
     }
@@ -203,7 +216,29 @@ impl Deserializer for Notification {
                 let notification = deserialize!(NewBlockTemplateNotification, reader)?;
                 Ok(Notification::NewBlockTemplate(notification))
             }
+            9 => {
+                let notification = deserialize!(CovenantTransactionsNotification, reader)?;
+                Ok(Notification::CovenantTransactions(notification))
+            }
             _ => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid variant")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn covenant_transactions_notification_roundtrips_and_maps_to_event_type() {
+        let notification = Notification::CovenantTransactions(CovenantTransactionsNotification::default());
+        assert_eq!(notification.event_type(), EventType::CovenantTransactions);
+
+        let mut buffer = Vec::new();
+        Serializer::serialize(&notification, &mut buffer).unwrap();
+        let decoded = <Notification as Deserializer>::deserialize(&mut buffer.as_slice()).unwrap();
+
+        assert!(matches!(decoded, Notification::CovenantTransactions(_)));
+        assert_eq!(decoded.event_type(), EventType::CovenantTransactions);
     }
 }

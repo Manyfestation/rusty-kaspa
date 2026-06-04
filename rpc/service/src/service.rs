@@ -165,6 +165,7 @@ impl RpcCoreService {
         // Prepare the rpc-core notifier objects
         let mut consensus_events: EventSwitches = EVENT_TYPE_ARRAY[..].into();
         consensus_events[EventType::UtxosChanged] = false;
+        consensus_events[EventType::CovenantTransactions] = false;
         consensus_events[EventType::PruningPointUtxoSetOverride] = index_notifier.is_none();
         let consensus_converter = Arc::new(ConsensusConverter::new(consensus_manager.clone(), config.clone()));
         let consensus_collector = Arc::new(CollectorFromConsensus::new(
@@ -248,6 +249,47 @@ impl RpcCoreService {
     #[inline(always)]
     pub fn subscription_context(&self) -> SubscriptionContext {
         self.notifier.subscription_context().clone()
+    }
+
+    pub async fn get_covenant_transactions_for_accepted_transactions(
+        &self,
+        accepting_block_hash: RpcHash,
+        accepted_transaction_ids: &[RpcTransactionId],
+        watched_covenant_ids: &[RpcHash],
+        covenant_filter: CovenantTransactionFilter,
+    ) -> RpcResult<CovenantTransactionsNotification> {
+        if accepted_transaction_ids.is_empty() {
+            return Ok(CovenantTransactionsNotification::default());
+        }
+
+        let session = self.consensus_manager.consensus().session().await;
+        let accepting_header = session.async_get_header(accepting_block_hash).await?;
+        let result = session
+            .async_get_transactions_by_accepting_daa_score(
+                accepting_header.daa_score,
+                Some(accepted_transaction_ids.to_vec()),
+                TransactionType::SignableTransaction,
+            )
+            .await?;
+
+        let TransactionQueryResult::SignableTransaction(txs) = result else {
+            return Err(RpcError::General("expected populated accepted transactions".to_string()));
+        };
+
+        let verbosity = RpcTransactionVerbosity::from(RpcDataVerbosityLevel::Full);
+        let block_time = accepting_header.timestamp;
+        let mut transactions = Vec::new();
+        for tx in txs.iter().filter(|tx| crate::covenant_transactions::touches_covenant(tx, watched_covenant_ids, covenant_filter)) {
+            transactions.push(RpcCovenantTransaction {
+                accepting_block_hash,
+                transaction: self
+                    .consensus_converter
+                    .convert_signable_transaction_with_verbosity(&session, tx, Some(accepting_block_hash), block_time, &verbosity)
+                    .await?,
+            });
+        }
+
+        Ok(CovenantTransactionsNotification { transactions: Arc::new(transactions) })
     }
 
     pub fn core_shutdown_request_listener(&self) -> triggered::Listener {

@@ -1437,6 +1437,42 @@ mod mockery {
 
     test!(NotifyUtxosChangedResponse);
 
+    impl Mock for NotifyCovenantTransactionsRequest {
+        fn mock() -> Self {
+            NotifyCovenantTransactionsRequest {
+                watched_covenant_ids: mock(),
+                covenant_filter: CovenantTransactionFilter::Both,
+                command: Command::Start,
+            }
+        }
+    }
+
+    test!(NotifyCovenantTransactionsRequest);
+
+    impl Mock for NotifyCovenantTransactionsResponse {
+        fn mock() -> Self {
+            NotifyCovenantTransactionsResponse {}
+        }
+    }
+
+    test!(NotifyCovenantTransactionsResponse);
+
+    impl Mock for RpcCovenantTransaction {
+        fn mock() -> Self {
+            RpcCovenantTransaction { accepting_block_hash: mock(), transaction: mock() }
+        }
+    }
+
+    test!(RpcCovenantTransaction);
+
+    impl Mock for CovenantTransactionsNotification {
+        fn mock() -> Self {
+            CovenantTransactionsNotification { transactions: mock() }
+        }
+    }
+
+    test!(CovenantTransactionsNotification);
+
     impl Mock for UtxosChangedNotification {
         fn mock() -> Self {
             UtxosChangedNotification { added: mock(), removed: mock() }

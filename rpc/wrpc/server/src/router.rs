@@ -101,6 +101,21 @@ impl Router {
             }),
         );
 
+        interface.method(
+            RpcApiOps::NotifyCovenantTransactions,
+            workflow_rpc::server::Method::new(
+                move |manager: Server, connection: Connection, request: Serializable<NotifyCovenantTransactionsRequest>| {
+                    Box::pin(async move {
+                        let response = manager
+                            .notify_covenant_transactions(&connection, request.into_inner())
+                            .await
+                            .map_err(|err| err.to_string())?;
+                        Ok(Serializable(response))
+                    })
+                },
+            ),
+        );
+
         Router { interface: Arc::new(interface), server_context }
     }
 }

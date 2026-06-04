@@ -3180,6 +3180,146 @@ impl Deserializer for NotifyUtxosChangedResponse {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CovenantTransactionFilter {
+    #[default]
+    Input,
+    Output,
+    Both,
+}
+
+impl Serializer for CovenantTransactionFilter {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        let value = *self as u8;
+        store!(u8, &value, writer)?;
+        Ok(())
+    }
+}
+
+impl Deserializer for CovenantTransactionFilter {
+    fn deserialize<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        match load!(u8, reader)? {
+            0 => Ok(Self::Input),
+            1 => Ok(Self::Output),
+            2 => Ok(Self::Both),
+            value => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid covenant transaction filter discriminant {value}"),
+            )),
+        }
+    }
+}
+
+// NotifyCovenantTransactionsRequest registers this connection for accepted
+// populated transaction notifications that touch covenant ids. An empty watched
+// set means any covenant id matching the selected filter.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifyCovenantTransactionsRequest {
+    #[serde(default)]
+    pub watched_covenant_ids: Vec<RpcHash>,
+    #[serde(default)]
+    pub covenant_filter: CovenantTransactionFilter,
+    pub command: Command,
+}
+
+impl NotifyCovenantTransactionsRequest {
+    pub fn new(watched_covenant_ids: Vec<RpcHash>, command: Command) -> Self {
+        Self { watched_covenant_ids, covenant_filter: CovenantTransactionFilter::default(), command }
+    }
+
+    pub fn with_filter(watched_covenant_ids: Vec<RpcHash>, covenant_filter: CovenantTransactionFilter, command: Command) -> Self {
+        Self { watched_covenant_ids, covenant_filter, command }
+    }
+}
+
+impl Serializer for NotifyCovenantTransactionsRequest {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        store!(u16, &2, writer)?;
+        store!(Vec<RpcHash>, &self.watched_covenant_ids, writer)?;
+        serialize!(CovenantTransactionFilter, &self.covenant_filter, writer)?;
+        store!(Command, &self.command, writer)?;
+        Ok(())
+    }
+}
+
+impl Deserializer for NotifyCovenantTransactionsRequest {
+    fn deserialize<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let version = load!(u16, reader)?;
+        let watched_covenant_ids = load!(Vec<RpcHash>, reader)?;
+        let covenant_filter =
+            if version > 1 { deserialize!(CovenantTransactionFilter, reader)? } else { CovenantTransactionFilter::default() };
+        let command = load!(Command, reader)?;
+        Ok(Self { watched_covenant_ids, covenant_filter, command })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifyCovenantTransactionsResponse {}
+
+impl Serializer for NotifyCovenantTransactionsResponse {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        store!(u16, &1, writer)?;
+        Ok(())
+    }
+}
+
+impl Deserializer for NotifyCovenantTransactionsResponse {
+    fn deserialize<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let _version = load!(u16, reader)?;
+        Ok(Self {})
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CovenantTransactionsNotification {
+    pub transactions: Arc<Vec<RpcCovenantTransaction>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcCovenantTransaction {
+    pub accepting_block_hash: RpcHash,
+    pub transaction: RpcOptionalTransaction,
+}
+
+impl Serializer for RpcCovenantTransaction {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        store!(u16, &1, writer)?;
+        store!(RpcHash, &self.accepting_block_hash, writer)?;
+        serialize!(RpcOptionalTransaction, &self.transaction, writer)?;
+        Ok(())
+    }
+}
+
+impl Deserializer for RpcCovenantTransaction {
+    fn deserialize<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let _version = load!(u16, reader)?;
+        let accepting_block_hash = load!(RpcHash, reader)?;
+        let transaction = deserialize!(RpcOptionalTransaction, reader)?;
+        Ok(Self { accepting_block_hash, transaction })
+    }
+}
+
+impl Serializer for CovenantTransactionsNotification {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        store!(u16, &1, writer)?;
+        serialize!(Vec<RpcCovenantTransaction>, &self.transactions, writer)?;
+        Ok(())
+    }
+}
+
+impl Deserializer for CovenantTransactionsNotification {
+    fn deserialize<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let _version = load!(u16, reader)?;
+        let transactions = deserialize!(Vec<RpcCovenantTransaction>, reader)?;
+        Ok(Self { transactions: transactions.into() })
+    }
+}
+
 // UtxosChangedNotificationMessage is sent whenever the UTXO index had been updated.
 //
 // See: NotifyUtxosChangedRequest

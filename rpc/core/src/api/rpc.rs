@@ -7,7 +7,7 @@
 //!
 
 use crate::api::connection::DynRpcConnection;
-use crate::{RpcResult, model::*, notify::connection::ChannelConnection};
+use crate::{RpcError, RpcResult, model::*, notify::connection::ChannelConnection};
 use async_trait::async_trait;
 use downcast::{AnySync, downcast_sync};
 use kaspa_notify::{listener::ListenerId, scope::Scope, subscription::Command};
@@ -524,6 +524,57 @@ pub trait RpcApi: Sync + Send + AnySync {
             Command::Start => self.start_notify(id, scope).await,
             Command::Stop => self.stop_notify(id, scope).await,
         }
+    }
+
+    /// Start or stop sending accepted transaction notifications for watched covenant ids.
+    async fn notify_covenant_transactions(&self, watched_covenant_ids: Vec<RpcHash>, command: Command) -> RpcResult<()> {
+        self.notify_covenant_transactions_with_filter(watched_covenant_ids, CovenantTransactionFilter::default(), command).await
+    }
+
+    /// Start or stop sending accepted transaction notifications for watched covenant ids and touch side.
+    async fn notify_covenant_transactions_with_filter(
+        &self,
+        watched_covenant_ids: Vec<RpcHash>,
+        covenant_filter: CovenantTransactionFilter,
+        command: Command,
+    ) -> RpcResult<()> {
+        self.notify_covenant_transactions_call(
+            None,
+            NotifyCovenantTransactionsRequest::with_filter(watched_covenant_ids, covenant_filter, command),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Start local delivery and remote registration for covenant transaction notifications.
+    async fn start_notify_covenant_transactions(&self, _id: ListenerId, watched_covenant_ids: Vec<RpcHash>) -> RpcResult<()> {
+        self.notify_covenant_transactions(watched_covenant_ids, Command::Start).await?;
+        Ok(())
+    }
+
+    /// Start local delivery and remote registration for covenant transaction notifications.
+    async fn start_notify_covenant_transactions_with_filter(
+        &self,
+        _id: ListenerId,
+        watched_covenant_ids: Vec<RpcHash>,
+        covenant_filter: CovenantTransactionFilter,
+    ) -> RpcResult<()> {
+        self.notify_covenant_transactions_with_filter(watched_covenant_ids, covenant_filter, Command::Start).await?;
+        Ok(())
+    }
+
+    /// Stop remote registration and local delivery for covenant transaction notifications.
+    async fn stop_notify_covenant_transactions(&self, _id: ListenerId, watched_covenant_ids: Vec<RpcHash>) -> RpcResult<()> {
+        self.notify_covenant_transactions(watched_covenant_ids, Command::Stop).await?;
+        Ok(())
+    }
+
+    async fn notify_covenant_transactions_call(
+        &self,
+        _connection: Option<&DynRpcConnection>,
+        _request: NotifyCovenantTransactionsRequest,
+    ) -> RpcResult<NotifyCovenantTransactionsResponse> {
+        Err(RpcError::NotImplemented)
     }
 }
 

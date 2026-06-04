@@ -64,6 +64,7 @@ impl kaspad_request::Payload {
                     command: command.into(),
                 })
             }
+            Scope::CovenantTransactions(_) => unreachable!("covenant transaction notifications are wRPC-only"),
         }
     }
 

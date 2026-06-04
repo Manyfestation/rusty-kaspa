@@ -40,6 +40,7 @@ pub enum RpcApiOps {
     NotifyVirtualDaaScoreChanged = 16,
     NotifyVirtualChainChanged = 17,
     NotifySinkBlueScoreChanged = 18,
+    NotifyCovenantTransactions = 19,
 
     // Notification ops required by wRPC
 
@@ -54,6 +55,7 @@ pub enum RpcApiOps {
     VirtualDaaScoreChangedNotification = 66,
     PruningPointUtxoSetOverrideNotification = 67,
     NewBlockTemplateNotification = 68,
+    CovenantTransactionsNotification = 69,
 
     // RPC methods
     /// Ping the node to check if connection is alive
@@ -149,6 +151,7 @@ impl RpcApiOps {
             RpcApiOps::NotifyBlockAdded
                 | RpcApiOps::NotifyNewBlockTemplate
                 | RpcApiOps::NotifyUtxosChanged
+                | RpcApiOps::NotifyCovenantTransactions
                 | RpcApiOps::NotifyVirtualChainChanged
                 | RpcApiOps::NotifyPruningPointUtxoSetOverride
                 | RpcApiOps::NotifyFinalityConflict
@@ -181,6 +184,29 @@ impl From<EventType> for RpcApiOps {
             EventType::VirtualDaaScoreChanged => RpcApiOps::VirtualDaaScoreChangedNotification,
             EventType::PruningPointUtxoSetOverride => RpcApiOps::PruningPointUtxoSetOverrideNotification,
             EventType::NewBlockTemplate => RpcApiOps::NewBlockTemplateNotification,
+            EventType::CovenantTransactions => RpcApiOps::CovenantTransactionsNotification,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kaspa_notify::{events::EventType, scope::Scope};
+    use std::str::FromStr;
+
+    #[test]
+    fn covenant_transactions_uses_clean_rpc_and_event_names() {
+        assert_eq!(serde_json::to_string(&RpcApiOps::NotifyCovenantTransactions).unwrap(), "\"notifyCovenantTransactions\"");
+        assert_eq!(
+            serde_json::to_string(&RpcApiOps::CovenantTransactionsNotification).unwrap(),
+            "\"covenantTransactionsNotification\""
+        );
+        assert_eq!(EventType::from_str("covenant-transactions").unwrap(), EventType::CovenantTransactions);
+        assert_eq!(RpcApiOps::from(EventType::CovenantTransactions), RpcApiOps::CovenantTransactionsNotification);
+
+        let scope: Scope = EventType::CovenantTransactions.into();
+        assert!(matches!(scope, Scope::CovenantTransactions(_)));
+        assert_eq!(EventType::from(&scope), EventType::CovenantTransactions);
     }
 }

@@ -17,7 +17,7 @@ use kaspa_grpc_core::{
 use kaspa_notify::{
     collector::{Collector, CollectorFrom},
     error::{Error as NotifyError, Result as NotifyResult},
-    events::{EVENT_TYPE_ARRAY, EventArray, EventType},
+    events::{EVENT_TYPE_ARRAY, EventArray, EventSwitches, EventType},
     listener::{ListenerId, ListenerLifespan},
     notifier::{DynNotify, Notifier},
     scope::Scope,
@@ -65,6 +65,12 @@ pub type GrpcClientNotify = DynNotify<Notification>;
 pub type GrpcClientNotifier = Notifier<Notification, ChannelConnection>;
 
 type DirectSubscriptions = Mutex<EventArray<DynSubscription>>;
+
+fn grpc_enabled_events() -> EventSwitches {
+    let mut events: EventSwitches = EVENT_TYPE_ARRAY[..].into();
+    events[EventType::CovenantTransactions] = false;
+    events
+}
 
 #[derive(Debug, Clone)]
 pub struct GrpcClient {
@@ -139,7 +145,7 @@ impl GrpcClient {
         let subscription_context = subscription_context.unwrap_or_default();
         let (notifier, collector, subscriptions) = match notification_mode {
             NotificationMode::MultiListeners => {
-                let enabled_events = EVENT_TYPE_ARRAY[..].into();
+                let enabled_events = grpc_enabled_events();
                 let collector = Arc::new(GrpcClientCollector::new(GRPC_CLIENT, inner.notification_channel_receiver(), converter));
                 let subscriber = Arc::new(Subscriber::new(GRPC_CLIENT, enabled_events, inner.clone(), 0));
                 let notifier: GrpcClientNotifier = Notifier::new(
@@ -912,6 +918,9 @@ impl Inner {
 
     /// Start sending notifications of some type to the client.
     async fn start_notify_to_client(&self, scope: Scope) -> RpcResult<()> {
+        if matches!(scope, Scope::CovenantTransactions(_)) {
+            return Err(RpcError::UnsupportedFeature);
+        }
         let request = kaspad_request::Payload::from_notification_type(&scope, Command::Start);
         self.call((&request).into(), request).await?;
         Ok(())
@@ -920,6 +929,9 @@ impl Inner {
     /// Stop sending notifications of some type to the client.
     async fn stop_notify_to_client(&self, scope: Scope) -> RpcResult<()> {
         if self.handle_stop_notify() {
+            if matches!(scope, Scope::CovenantTransactions(_)) {
+                return Err(RpcError::UnsupportedFeature);
+            }
             let request = kaspad_request::Payload::from_notification_type(&scope, Command::Stop);
             self.call((&request).into(), request).await?;
         }
