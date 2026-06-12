@@ -35,6 +35,7 @@ kaspa-consensus-core.workspace = true
 
 [dev-dependencies]
 faster-hex.workspace = true
+kaspa-addresses.workspace = true
 
 [lints]
 workspace = true
